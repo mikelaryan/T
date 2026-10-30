@@ -37,8 +37,8 @@ GEMINI_MODELS = [
 # ===========================================
 # تنظیمات کلادفلر (لایسنس)
 # ===========================================
-CLOUDFLARE_WORKER_URL = "https://tolider-license-api.mikelshayan.workers.dev/"
-CLOUDFLARE_SECRET_KEY = "tolider_secret_2026_x9y8z7"
+CLOUDFLARE_WORKER_URL = "https://tolider-premium-api.mikelshayan.workers.dev/"
+CLOUDFLARE_SECRET_KEY = "tolider_premium_secret_2026_x9y8z7"
 
 
 # سطح لاگ (DEBUG / INFO / WARNING / ERROR)

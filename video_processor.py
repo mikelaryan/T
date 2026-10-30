@@ -93,7 +93,7 @@ def download_instagram_video(url: str, user_id: int, progress=None) -> str:
             info = ydl.extract_info(url, download=False)
             duration = info.get("duration", 0)
             
-            if duration and duration > 90:
+            if duration and duration > 120:
                 raise VideoTooLongError(f"مدت زمان ویدیو {int(duration)} ثانیه است. برای تست، فقط ویدیوهای زیر ۹۰ ثانیه مجاز هستند.")
             
             # 👈 مرحله دوم: دانلود ویدیو
@@ -115,9 +115,9 @@ def save_telegram_video(bot, message, user_id: int, progress=None) -> str:
     _ensure_work_dir()
 
     if message.video:
-        # 👈 چک کردن زمان ویدیوی آپلود شده در تلگرام
-        if message.video.duration and message.video.duration > 90:
-            raise VideoTooLongError(f"مدت زمان ویدیو {message.video.duration} ثانیه است. برای تست، فقط ویدیوهای زیر ۹۰ ثانیه مجاز هستند.")
+        # 👈 چک کردن محدودیت ۲ دقیقه برای فایل‌های آپلود شده در تلگرام
+        if message.video.duration and message.video.duration > 120:
+            raise VideoTooLongError(f"مدت زمان ویدیو {message.video.duration} ثانیه است. حداکثر زمان مجاز، ۲ دقیقه است.")
             
         file_id = message.video.file_id
         file_size = message.video.file_size or 0
