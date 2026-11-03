@@ -108,9 +108,9 @@ def handle_start(message: types.Message):
         bot.send_message(
             message.chat.id, 
             f"سلام {message.from_user.first_name} 👋\n\n"
-            "🌟 به ربات پرمیوم **Tolider** خوش آمدید!\n\n"
+            "🌟 به ربات پرمیوم **تولیدر** خوش آمدید!\n\n"
             "🔒 برای استفاده از ربات، لطفاً **کد لایسنس** خود را ارسال کنید.\n"
-            "🎫 اگر کد لایسنس ندارید، می‌توانید آن را از کانال/پیج ما تهیه کنید."
+            "🎫 اگر کد لایسنس ندارید، می‌توانید آن را از ما تهیه کنید."
         )
 
 @bot.message_handler(commands=["help"])
