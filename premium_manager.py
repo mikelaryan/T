@@ -30,8 +30,14 @@ def _send_request(payload: dict) -> dict:
             logger.error(f"Cloudflare Premium HTTP Error {response.status_code}: {response.text}")
             return {"status": "error", "message": "خطا در ارتباط با سرور."}
             
-        return response.json()
-    except requests.exceptions.RequestException as e:
+        # 👈 استفاده از try-except برای جلوگیری از کرش در صورت عدم دریافت JSON
+        try:
+            return response.json()
+        except Exception as e:
+            logger.error(f"خطا در خواندن JSON از کلادفلر: {e}")
+            return {"status": "error", "message": "پاسخ نامعتبر از سرور."}
+            
+    except Exception as e:
         logger.error(f"خطای شبکه در ارتباط با کلادفلر (پرمیوم): {e}")
         return {"status": "error", "message": "خطا در اتصال به سیستم."}
 
