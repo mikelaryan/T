@@ -259,7 +259,7 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
                         try:
                             us = int(line.split("=", 1)[1])
                             pct = min(100.0, us / (duration * 1_000_000) * 100)
-                            progress.update(stage=3, sub_text="در حال چسباندن روی ویدیو...", pct=pct)
+                            progress.update(stage=1, sub_text="در حال چسباندن روی ویدیو...", pct=pct)
                         except ValueError:
                             pass
                 proc.wait()
