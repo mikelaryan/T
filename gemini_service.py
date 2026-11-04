@@ -27,7 +27,7 @@ SUBTITLE_PROMPT = """
 ۳. زمان شروع و پایان هر جمله را نسبت به ابتدای فایل صوتی (ثانیه) مشخص کنی (خیلی مهم).
 
 
-واژه‌نامه تخصصی نقاشی و طراحی (حتماً رعایت شود):
+واژه‌نامه تخصصی نقاشی و طراحی (حتما رعایت شود):
 - Soft edge = لبه محو / لبه نرم
 - Lost edge =  لبه محو
 - Value = تیرگی‌روشنی / تن سایه
@@ -110,9 +110,13 @@ def _extract_subtitles(response_json: dict) -> dict:
         raise ValueError("پاسخ حاوی کلید subtitles معتبر نیست.")
     return parsed
 
-def _sleep_backoff(attempt: int, base: float = 2.0, max_wait: float = 30.0):
+def _sleep_backoff(attempt: int, base: float = 5.0, max_wait: float = 300.0):
+    """
+    تاخیر تصاعدی با جیتر (پرش تصادفی)
+    تلاش اول: ~۵ ثانیه، تلاش دوم: ~۱۰ ثانیه، ... تا حداکثر ۵ دقیقه
+    """
     wait = min(base * (2 ** (attempt - 1)), max_wait)
-    jitter = random.uniform(0, 1)
+    jitter = random.uniform(0, 2.0)
     total = wait + jitter
     logger.info(f"⏳ {total:.1f} ثانیه صبر می‌کنم قبل از تلاش بعدی...")
     time.sleep(total)
@@ -135,44 +139,48 @@ def transcribe_audio(audio_path: str) -> dict:
         "x-goog-api-key": config.GEMINI_API_KEY,
     }
 
-    # خواندن لیست مدل‌ها از کانفیگ
-    models = getattr(config, "GEMINI_MODELS", None) or ["gemini-3.5-flash-lite"]
+    # 👈 فقط و فقط مدل ۳.۸ استفاده می‌شود
+    model = "gemini-3.8-flash"
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    max_retries = 12
     last_error = None
 
-    for model in models:
-        logger.info(f"📡 امتحان مدل: {model}")
+    for attempt in range(1, max_retries + 1):
+        logger.info(f"📡 [{model}] تلاش {attempt}/{max_retries} — در حال ارسال درخواست...")
+        t0 = time.time()
+        
+        try:
+            # ۵ دقیقه (۳۰۰ ثانیه) تایم‌اوت برای هر درخواست
+            response = requests.post(api_url, headers=headers, json=payload, timeout=300)
+        except requests.RequestException as e:
+            last_error = e
+            logger.warning(f"خطای شبکه ({model}, تلاش {attempt}): {e}")
+            if attempt < max_retries:
+                _sleep_backoff(attempt)
+            continue
 
-        # ساخت داینامیک لینک API برای هر مدل
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        elapsed = time.time() - t0
+        logger.info(f"⏱ {model} پاسخ داد در {elapsed:.1f}s (کد {response.status_code})")
 
-        max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            t0 = time.time()
-            try:
-                response = requests.post(api_url, headers=headers, json=payload, timeout=300)
-            except requests.RequestException as e:
-                last_error = e
-                logger.warning(f"خطای شبکه ({model}, تلاش {attempt}): {e}")
+        if response.status_code == 200:
+            result = _extract_subtitles(response.json())
+            logger.info(f"✅ زیرنویس دریافت شد با {model} ({len(result['subtitles'])} خط)")
+            return result
+
+        # خطاهای قابل تلاش مجدد (شلوغی سرور یا خطای موقت)
+        if response.status_code in (503, 429, 500, 502, 504):
+            body = response.text[:300]
+            logger.warning(f"⚠️ {model} → HTTP {response.status_code}: {body}")
+            last_error = f"HTTP {response.status_code}: {body}"
+
+            if attempt < max_retries:
                 _sleep_backoff(attempt)
                 continue
-
-            elapsed = time.time() - t0
-            logger.info(f"⏱ {model} پاسخ داد در {elapsed:.1f}s (کد {response.status_code})")
-
-            if response.status_code == 200:
-                result = _extract_subtitles(response.json())
-                logger.info(f"✅ زیرنویس دریافت شد با {model} ({len(result['subtitles'])} خط)")
-                return result
-
-            if response.status_code in (503, 429, 500, 502, 504):
-                body = response.text[:300]
-                logger.warning(f"⚠️ {model} → HTTP {response.status_code}: {body}")
-                if attempt < max_retries:
-                    _sleep_backoff(attempt)
-                    continue
-                logger.warning(f"❌ {model} جواب نداد. سوییچ به مدل بعدی...")
+            else:
                 break
 
-            raise RuntimeError(f"Gemini API خطا داد (کد {response.status_code}): {response.text[:500]}")
+        # خطاهای غیرقابل جبران (مثل کلید اشتباه)
+        raise RuntimeError(f"Gemini API خطا داد (کد {response.status_code}): {response.text[:500]}")
 
-    raise RuntimeError(f"همه‌ی مدل‌ها ناموفق بودن. آخرین خطا: {last_error}")
+    raise RuntimeError(f"هر {max_retries} تلاش برای مدل {model} ناموفق بود. آخرین خطا: {last_error}")
