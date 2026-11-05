@@ -37,6 +37,7 @@ INSTAGRAM_PATTERN = re.compile(
 # ===========================================
 # مدیریت کاربران
 # ===========================================
+user_regenerate_state = {} # ذخیره وضعیت تولید مجدد برای هر کاربر
 _busy_lock = threading.Lock()
 _busy_users: set = set()
 user_last_inputs = {}
@@ -173,7 +174,8 @@ def handle_input(message: types.Message):
         bot.reply_to(message, "⏳ درخواست شما در صف قرار گرفته است.\nلطفاً صبر کنید.")
         return
 
-    queue_position = queue_manager.add_to_queue(user_id, message, is_link)
+    # 👈 پارامتر is_regen=False به صورت صریح اضافه شد
+    queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
     bot.reply_to(
@@ -187,36 +189,49 @@ def handle_input(message: types.Message):
 # ===========================================
 # پردازش اصلی
 # ===========================================
-def _process(message: types.Message, is_link: bool):
+def _process(message: types.Message, is_link: bool, is_regen: bool = False):
     logger.info(f"[LOG] Starting main processing for user {message.from_user.id}.")
     reporter = ProgressReporter(bot, message.chat.id)
 
     try:
-        # مرحله 1 و 2
         video_path, audio_path = process_incoming(bot, message, is_link, progress=reporter)
 
-        # مرحله 3 (جمینای)
-        reporter.update(stage=1, sub_text="در حال دریافت ترجمه...", pct=50, force=True)
+        reporter.update(stage=1, sub_text="", pct=50, force=True)
         result = transcribe_audio(audio_path)
 
-        # مرحله 4
         srt_path = str(WORK_DIR / f"subtitles_{message.from_user.id}.srt")
         save_srt(result["subtitles"], srt_path)
-        reporter.update(stage=1, sub_text=f"{len(result['subtitles'])} خط زیرنویس دریافت شد", pct=100, force=True)
+        reporter.update(stage=1, sub_text="", pct=100, force=True)
 
-        # مرحله 5 (رندر و ارسال)
+        # 👈 ساخت دکمه تولید مجدد (فقط اگر درخواست اول باشد، نه خود تولید مجدد)
+        markup = None
+        if not is_regen:
+            markup = types.InlineKeyboardMarkup()
+            regen_btn = types.InlineKeyboardButton("🔄 تولید مجدد (فقط یک‌بار)", callback_data=f"regen_{message.from_user.id}")
+            markup.add(regen_btn)
+
         render_and_send(
             bot=bot,
             chat_id=message.chat.id,
             video_path=video_path,
             subtitles=result["subtitles"],
             progress=reporter,
+            reply_markup=markup # 👈 ارسال دکمه
         )
 
-        # 👈 حالا که ویدیو با موفقیت ساخته و ارسال شد، شارژ رو کم میکنیم
-        consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
-        if consume_ok:
-            logger.info(f"[LOG] Limit consumed successfully. {consume_msg}")
+        # 👈 کم کردن شارژ (اگر تولید مجدد نباشد)
+        consume_msg = ""
+        if not is_regen:
+            consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
+            if consume_ok:
+                logger.info(f"[LOG] Limit consumed successfully. {consume_msg}")
+            
+            # ذخیره اطلاعات برای دکمه تولید مجدد
+            user_regenerate_state[message.from_user.id] = {
+                "message": message,
+                "is_link": is_link,
+                "used": False
+            }
 
         logger.info(f"[LOG] Processing for user {message.from_user.id} completed successfully.")
         reporter.finish(
@@ -224,15 +239,6 @@ def _process(message: types.Message, is_link: bool):
             f"🎬 ویدیوی شما زیرنویس شد و در پیام پایین ارسال گردید.\n"
             f"⏱ زمان کل: {int(time.time() - reporter.start_time)} ثانیه\n"
             f"📊 {consume_msg}"
-        )
-
-    # 👈 این بلوک جدید اضافه شد تا خطای ویدیوی طولانی مدیریت شود
-    except VideoTooLongError as e:
-        logger.warning(f"[LOG] Video too long for user {message.from_user.id}.")
-        reporter.error(
-            f"⚠️ <b>محدودیت زمانی:</b>\n\n"
-            f"{str(e)}\n\n"
-            f"🚀 برای پردازش ویدیوهای طولانی‌تر، لطفاً با پشتیبانی در ارتباط باشید."
         )
 
     except Exception as e:
@@ -244,16 +250,12 @@ def _process(message: types.Message, is_link: bool):
         markup.add(retry_btn)
         
         err_str = str(e)
-        # 👈 تشخیص خطای شلوغی سرور و تبدیل به پیام زیبا
         if "503" in err_str or "UNAVAILABLE" in err_str or "همه مدل‌ها ناموفق بودند" in err_str:
             friendly_error = "⚠️ <b>سرورهای هوش مصنوعی در حال حاضر با ترافیک بالا مواجه هستند.</b>\n\nلطفاً چند لحظه صبر کنید و دکمه تلاش مجدد را بزنید."
         else:
             friendly_error = err_str[:300].replace("<", "&lt;").replace(">", "&gt;")
             
-        reporter.error(
-            f"❌ <b>خطا در پردازش:</b>\n\n{friendly_error}",
-            reply_markup=markup
-        )
+        reporter.error(f"❌ <b>خطا در پردازش:</b>\n\n{friendly_error}", reply_markup=markup)
 @bot.callback_query_handler(func=lambda call: call.data.startswith("retry_"))
 def handle_retry(call: types.CallbackQuery):
     user_id = int(call.data.split("_")[1])
@@ -286,11 +288,42 @@ def handle_retry(call: types.CallbackQuery):
     
     if not _mark_busy(user_id):
         return
+    
+    # 👈 استفاده از صف
+    queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("regen_"))
+def handle_regenerate(call: types.CallbackQuery):
+    user_id = int(call.data.split("_")[1])
+    logger.info(f"[LOG] User {user_id} requested regeneration.")
+    
+    state = user_regenerate_state.get(user_id)
+    
+    # 👈 اگر قبلا استفاده کرده باشه
+    if not state or state["used"]:
+        bot.answer_callback_query(call.id, "❌ شما قبلاً از فرصت تولید مجدد استفاده کرده‌اید.", show_alert=True)
+        return
         
+    if _is_busy(user_id):
+        bot.answer_callback_query(call.id, "⏳ ربات در حال پردازش است. لطفاً صبر کنید.", show_alert=True)
+        return
+
+    # علامت‌گذاری به عنوان استفاده شده و حذف دکمه
+    state["used"] = True
     try:
-        _process(message, is_link)
-    finally:
-        _mark_free(user_id)
+        bot.edit_message_reply_markup(chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=None)
+    except Exception:
+        pass
+        
+    bot.answer_callback_query(call.id, "🔄 در حال تولید مجدد...")
+    
+    if not _mark_busy(user_id):
+        return
+        
+    # 👈 اضافه کردن به صف با پرچم is_regen=True
+    queue_manager.add_to_queue(user_id, state["message"], state["is_link"], is_regen=True)
+
 
 # ===========================================
 # اجرا و وبهوک
