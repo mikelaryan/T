@@ -178,7 +178,7 @@ def _create_ass_file(subtitles, ass_path, video_w, video_h) -> tuple[int, int]:
 # ==========================================
 # تابع اصلی
 # ==========================================
-def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
+def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_markup=None):
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"ویدیو پیدا نشد: {video_path}")
 
@@ -281,7 +281,7 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
                 caption=f"✨ <b>ویدیوی زیرنویس‌شده آماده شد!</b>\n📦 {size_mb:.1f}MB",
                 parse_mode="HTML",
                 timeout=600,
-                reply_markup=reply_markup  # 👈 این خط اضافه شد
+                reply_markup=reply_markup  # 👈 این خط اضافه بشه
             )
         return output_path
 
