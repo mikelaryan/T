@@ -25,12 +25,10 @@ def _send_request(payload: dict) -> dict:
             json=payload,
             timeout=15
         )
-        # اگر خطای HTTP 500 یا 401 رخ داد
         if response.status_code not in (200, 400):
             logger.error(f"Cloudflare Premium HTTP Error {response.status_code}: {response.text}")
             return {"status": "error", "message": "خطا در ارتباط با سرور."}
             
-        # 👈 استفاده از try-except برای جلوگیری از کرش در صورت عدم دریافت JSON
         try:
             return response.json()
         except Exception as e:
@@ -45,7 +43,6 @@ def _send_request(payload: dict) -> dict:
 # ۱. فعال‌سازی لایسنس
 # ===========================================
 def activate_premium(telegram_id: int, username: str, license_key: str) -> tuple[bool, str]:
-    """فعال‌سازی لایسنس پرمیوم برای کاربر"""
     payload = {
         "action": "activate",
         "telegram_id": str(telegram_id),
@@ -64,7 +61,6 @@ def activate_premium(telegram_id: int, username: str, license_key: str) -> tuple
 # ۲. بررسی احراز هویت
 # ===========================================
 def check_premium_auth(telegram_id: int) -> tuple[bool, dict | str]:
-    """بررسی اینکه آیا کاربر لایسنس فعال و منقضی نشده دارد یا خیر"""
     payload = {
         "action": "auth",
         "telegram_id": str(telegram_id)
@@ -82,7 +78,6 @@ def check_premium_auth(telegram_id: int) -> tuple[bool, dict | str]:
 # ۳. چک کردن محدودیت روزانه (بدون کم کردن)
 # ===========================================
 def check_daily_limit(telegram_id: int) -> tuple[bool, str]:
-    """بررسی اینکه آیا کاربر شارژ برای پردازش داره یا نه"""
     payload = {
         "action": "check_limit",
         "telegram_id": str(telegram_id)
@@ -99,7 +94,6 @@ def check_daily_limit(telegram_id: int) -> tuple[bool, str]:
 # ۴. کم کردن شارژ (فقط بعد از موفقیت)
 # ===========================================
 def consume_daily_limit(telegram_id: int) -> tuple[bool, str]:
-    """کم کردن یک واحد از سقف روزانه بعد از ساخت موفقیت‌آمیز ویدیو"""
     payload = {
         "action": "consume",
         "telegram_id": str(telegram_id)
@@ -112,6 +106,3 @@ def consume_daily_limit(telegram_id: int) -> tuple[bool, str]:
         return True, f"{remaining} استفاده باقی‌مانده."
     
     return False, data.get("message", "خطا در کم کردن سقف.")
-        return True, f"شما امروز {remaining} استفاده دیگر مجاز هستید."
-    
-    return False, data.get("message", "خطا در بررسی سقف روزانه.")
