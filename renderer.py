@@ -281,6 +281,7 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None):
                 caption=f"✨ <b>ویدیوی زیرنویس‌شده آماده شد!</b>\n📦 {size_mb:.1f}MB",
                 parse_mode="HTML",
                 timeout=600,
+                reply_markup=reply_markup  # 👈 این خط اضافه شد
             )
         return output_path
 
