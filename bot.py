@@ -237,12 +237,17 @@ def _process(message: types.Message, is_link: bool):
         retry_btn = types.InlineKeyboardButton("🔄 تلاش مجدد", callback_data=f"retry_{message.from_user.id}")
         markup.add(retry_btn)
         
-        safe_error = str(e)[:500].replace("<", "&lt;").replace(">", "&gt;")
+        err_str = str(e)
+        # 👈 تشخیص خطای شلوغی سرور و تبدیل به پیام زیبا
+        if "503" in err_str or "UNAVAILABLE" in err_str or "همه مدل‌ها ناموفق بودند" in err_str:
+            friendly_error = "⚠️ <b>سرورهای هوش مصنوعی در حال حاضر با ترافیک بالا مواجه هستند.</b>\n\nلطفاً چند لحظه صبر کنید و دکمه تلاش مجدد را بزنید."
+        else:
+            friendly_error = err_str[:300].replace("<", "&lt;").replace(">", "&gt;")
+            
         reporter.error(
-            f"❌ <b>خطا در پردازش:</b>\n<code>{safe_error}</code>",
+            f"❌ <b>خطا در پردازش:</b>\n\n{friendly_error}",
             reply_markup=markup
         )
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("retry_"))
 def handle_retry(call: types.CallbackQuery):
     user_id = int(call.data.split("_")[1])
