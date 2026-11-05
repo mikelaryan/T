@@ -79,10 +79,27 @@ def check_premium_auth(telegram_id: int) -> tuple[bool, dict | str]:
     return False, data.get("message", "شما لایسنس فعالی ندارید.")
 
 # ===========================================
-# ۳. مصرف اعتبار روزانه
+# ۳. چک کردن محدودیت روزانه (بدون کم کردن)
+# ===========================================
+def check_daily_limit(telegram_id: int) -> tuple[bool, str]:
+    """بررسی اینکه آیا کاربر شارژ برای پردازش داره یا نه"""
+    payload = {
+        "action": "check_limit",
+        "telegram_id": str(telegram_id)
+    }
+    
+    data = _send_request(payload)
+    if data.get("status") == "success":
+        remaining = data.get("remaining", 0)
+        return True, f"شما امروز {remaining} استفاده دیگر مجاز هستید."
+    
+    return False, data.get("message", "خطا در بررسی سقف روزانه.")
+
+# ===========================================
+# ۴. کم کردن شارژ (فقط بعد از موفقیت)
 # ===========================================
 def consume_daily_limit(telegram_id: int) -> tuple[bool, str]:
-    """کم کردن یک واحد از سقف روزانه قبل از پردازش ویدیو"""
+    """کم کردن یک واحد از سقف روزانه بعد از ساخت موفقیت‌آمیز ویدیو"""
     payload = {
         "action": "consume",
         "telegram_id": str(telegram_id)
@@ -91,7 +108,10 @@ def consume_daily_limit(telegram_id: int) -> tuple[bool, str]:
     data = _send_request(payload)
     if data.get("status") == "success":
         remaining = data.get("remaining", 0)
-        logger.info(f"User {telegram_id} consumed 1 limit. Remaining today: {remaining}")
+        logger.info(f"User {telegram_id} consumed 1 limit. Remaining: {remaining}")
+        return True, f"{remaining} استفاده باقی‌مانده."
+    
+    return False, data.get("message", "خطا در کم کردن سقف.")
         return True, f"شما امروز {remaining} استفاده دیگر مجاز هستید."
     
     return False, data.get("message", "خطا در بررسی سقف روزانه.")
