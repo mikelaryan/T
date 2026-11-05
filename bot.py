@@ -163,7 +163,7 @@ def handle_input(message: types.Message):
         return
 
     # ۳. چک کردن محدودیت روزانه (قبل از صف)
-    is_allowed, limit_msg = premium_manager.consume_daily_limit(user_id)
+    is_allowed, limit_msg = premium_manager.check_daily_limit(user_id)
     if not is_allowed:
         bot.reply_to(message, f"⚠️ {limit_msg}")
         return
@@ -213,11 +213,17 @@ def _process(message: types.Message, is_link: bool):
             progress=reporter,
         )
 
+        # 👈 حالا که ویدیو با موفقیت ساخته و ارسال شد، شارژ رو کم میکنیم
+        consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
+        if consume_ok:
+            logger.info(f"[LOG] Limit consumed successfully. {consume_msg}")
+
         logger.info(f"[LOG] Processing for user {message.from_user.id} completed successfully.")
         reporter.finish(
             f"✅ <b>عملیات با موفقیت انجام شد!</b>\n\n"
             f"🎬 ویدیوی شما زیرنویس شد و در پیام پایین ارسال گردید.\n"
-            f"⏱ زمان کل: {int(time.time() - reporter.start_time)} ثانیه"
+            f"⏱ زمان کل: {int(time.time() - reporter.start_time)} ثانیه\n"
+            f"📊 {consume_msg}"
         )
 
     # 👈 این بلوک جدید اضافه شد تا خطای ویدیوی طولانی مدیریت شود
