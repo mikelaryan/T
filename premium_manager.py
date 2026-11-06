@@ -148,3 +148,19 @@ def consume_daily_limit(telegram_id: int) -> tuple[bool, str]:
         return True, f"{remaining} استفاده باقی‌مانده."
     
     return False, data.get("message", "خطا در کم کردن سقف.")
+
+# ===========================================
+# ۵. ارتباط با آپدیت (Update System)
+# ===========================================
+def get_all_active_users() -> list:
+    data = _send_request({"action": "get_all_users"})
+    if data.get("status") == "success":
+        return [u["telegram_id"] for u in data.get("users", [])]
+    return []
+
+def get_setting(key: str) -> str:
+    data = _send_request({"action": "get_setting", "key": key})
+    return data.get("value")
+
+def set_setting(key: str, value: str):
+    _send_request({"action": "set_setting", "key": key, "value": value})
