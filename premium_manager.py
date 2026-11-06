@@ -3,6 +3,8 @@
 شامل: فعال‌سازی لایسنس، بررسی احراز هویت و مصرف اعتبار روزانه
 """
 
+import jdatetime
+from datetime import datetime
 import logging
 import requests
 import config
@@ -39,6 +41,18 @@ def _send_request(payload: dict) -> dict:
         logger.error(f"خطای شبکه در ارتباط با کلادفلر (پرمیوم): {e}")
         return {"status": "error", "message": "خطا در اتصال به سیستم."}
 
+def to_jalali(date_str: str) -> str:
+    """تبدیل تاریخ میلادی (YYYY-MM-DD) به شمسی"""
+    if not date_str:
+        return "نامشخص"
+    try:
+        dt = datetime.strptime(str(date_str), "%Y-%m-%d")
+        return jdatetime.date.fromgregorian(date=dt).strftime("%Y/%m/%d")
+    except Exception:
+        return str(date_str)
+
+
+
 # ===========================================
 # ۱. فعال‌سازی لایسنس
 # ===========================================
@@ -50,10 +64,11 @@ def activate_premium(telegram_id: int, username: str, license_key: str) -> tuple
         "license_key": license_key.strip()
     }
     
-    data = _send_request(payload)
     if data.get("status") == "success":
-        logger.info(f"✅ Premium activated for {telegram_id} until {data.get('expiry')}")
-        return True, f"لایسنس شما فعال شد. اعتبار تا: {data.get('expiry')}"
+        raw_expiry = data.get('expiry')
+        jalali_expiry = to_jalali(raw_expiry)
+        logger.info(f"✅ Premium activated for {telegram_id} until {raw_expiry}")
+        return True, f"لایسنس شما فعال شد. اعتبار تا: {jalali_expiry}"
     
     return False, data.get("message", "خطای نامشخص در فعال‌سازی.")
 
