@@ -3,8 +3,6 @@
 شامل: فعال‌سازی لایسنس، بررسی احراز هویت و مصرف اعتبار روزانه
 """
 
-import jdatetime
-from datetime import datetime
 import logging
 import requests
 import config
@@ -42,13 +40,39 @@ def _send_request(payload: dict) -> dict:
         return {"status": "error", "message": "خطا در اتصال به سیستم."}
 
 def to_jalali(date_str: str) -> str:
-    """تبدیل تاریخ میلادی (YYYY-MM-DD) به شمسی"""
+    """تبدیل تاریخ میلادی (YYYY-MM-DD) به شمسی بدون نیاز به کتابخانه جانبی"""
     if not date_str:
         return "نامشخص"
     try:
-        dt = datetime.strptime(str(date_str), "%Y-%m-%d")
-        return jdatetime.date.fromgregorian(date=dt).strftime("%Y/%m/%d")
-    except Exception:
+        # تاریخ باید به شکل YYYY-MM-DD باشد
+        gy, gm, gd = map(int, str(date_str).strip().split("-"))
+        
+        g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+        if gy > 1600:
+            jy = 979
+            gy -= 1600
+        else:
+            jy = 0
+            gy -= 621
+            
+        gy2 = (gy + 1) if gm > 2 else gy
+        days = (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100) + ((gy2 + 399) // 400) - 80 + gd + g_d_m[gm - 1]
+        
+        jy += 33 * (days // 12053)
+        days %= 12053
+        jy += 4 * (days // 1461)
+        days %= 1461
+        
+        if days > 365:
+            jy += (days - 1) // 365
+            days = (days - 1) % 365
+            
+        jm = 1 + (days // 31) if days < 186 else 7 + ((days - 186) // 30)
+        jd = 1 + (days % 31) if jm <= 6 else 1 + ((days - 186) % 30)
+        
+        return f"{jy}/{jm:02d}/{jd:02d}"
+    except Exception as e:
+        print(f"Date conversion error: {e}")
         return str(date_str)
 
 
