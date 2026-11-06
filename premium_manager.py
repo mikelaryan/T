@@ -88,6 +88,9 @@ def activate_premium(telegram_id: int, username: str, license_key: str) -> tuple
         "license_key": license_key.strip()
     }
     
+    # 👈 این خط حیاتی جا افتاده بود!
+    data = _send_request(payload)
+    
     if data.get("status") == "success":
         raw_expiry = data.get('expiry')
         jalali_expiry = to_jalali(raw_expiry)
