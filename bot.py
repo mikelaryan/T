@@ -407,7 +407,7 @@ def notify_users_about_update():
         message_text = (
             f"🚀 <b>ربات تولیدر آپدیت شد!</b>\n\n"
             f"📝 <b>تغییرات جدید:</b>\n<code>{changelog_text}</code>\n\n"
-            f"⚠️ <b>مهم:</b> برای اعمال تغییرات و جلوگیری از قطعی، لطفاً یک بار دستور /start را بزنید."
+            f"✨ <i>ربات آماده دریافت لینک‌ها و ویدیوهای جدید شماست.</i>"
         )
 
         for uid in users:
