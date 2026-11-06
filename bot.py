@@ -7,11 +7,13 @@ import re
 import time
 import logging
 import threading
+import hashlib
+import datetime
+from zoneinfo import ZoneInfo
+
 import telebot
 from telebot import types
 from flask import Flask, request
-import datetime
-from zoneinfo import ZoneInfo
 
 import config
 import queue_manager
@@ -74,50 +76,6 @@ def is_video_file(message: types.Message) -> bool:
     if message.document and (message.document.mime_type or "").startswith("video/"):
         return True
     return False
-
-
-# ===========================================
-# زمان‌بند ریست نیمه‌شب
-# ===========================================
-def midnight_reset_notifier():
-    """ترد پس‌زمینه برای ارسال پیام ریست شارژ در ساعت ۱۲ شب به وقت ایران"""
-    logger.info("[SCHEDULER] Midnight reset notifier thread started.")
-    last_reset_date = None
-    
-    while True:
-        try:
-            # گرفتن زمان دقیق فعلی به وقت تهران
-            now = datetime.datetime.now(ZoneInfo("Asia/Tehran"))
-            today = now.date()
-
-            # اگر ساعت دقیقاً 00:00 بود و برای امروز هنوز پیام نداده‌ایم
-            if now.hour == 0 and now.minute == 0 and last_reset_date != today:
-                logger.info("[SCHEDULER] It's midnight. Sending reset notifications...")
-                
-                # کپی گرفتن از لیست برای جلوگیری از خطای تغییر سایز حین حلقه
-                users_to_notify = list(authenticated_users)
-                
-                for uid in users_to_notify:
-                    try:
-                        bot.send_message(
-                            uid,
-                            "🌅 <b>روز جدید مبارک!</b>\n\n"
-                            "📊 شارژ استفاده روزانه شما به‌طور خودکار ریست شد.\n"
-                            "🔗 حالا می‌توانید ویدیوهای جدید خود را ارسال کنید.",
-                            parse_mode="HTML"
-                        )
-                    except Exception as e:
-                        # اگر کاربر ربات را بلاک کرده باشد، خطا را نادیده می‌گیریم
-                        logger.warning(f"[SCHEDULER] Could not send reset message to {uid}: {e}")
-                
-                last_reset_date = today
-                logger.info("[SCHEDULER] All reset notifications sent.")
-
-        except Exception as e:
-            logger.error(f"[SCHEDULER] Error in midnight notifier: {e}")
-
-        # هر ۳۰ ثانیه یکبار چک می‌کند تا بار روی سرور کم باشد
-        time.sleep(30)
 
 # ===========================================
 # هندلرها
@@ -186,7 +144,7 @@ def handle_input(message: types.Message):
     # ۱. بررسی احراز هویت (اگر کاربر توی رم نیست)
     if user_id not in authenticated_users:
         
-        # 👈 اول بریم از دیتابیس کلادفلر چک کنیم (شاید ربات ری‌استارت شده باشه)
+        # اول بریم از دیتابیس کلادفلر چک کنیم (شاید ربات ری‌استارت شده باشه)
         is_auth, auth_data = premium_manager.check_premium_auth(user_id)
         
         if is_auth:
@@ -241,6 +199,7 @@ def handle_input(message: types.Message):
     queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
+    # پیام جدید بدون نمایش شماره صف
     bot.reply_to(
         message,
         f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت.\n"
@@ -264,7 +223,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         save_srt(result["subtitles"], srt_path)
         reporter.update(stage=1, sub_text="", pct=100, force=True)
 
-        # ساخت دکمه تولید مجدد (فقط اگر درخواست اول باشد)
+        # ساخت دکمه تولید مجدد (فقط اگر درخواست اول باشد، نه خود تولید مجدد)
         markup = None
         if not is_regen:
             markup = types.InlineKeyboardMarkup()
@@ -386,6 +345,85 @@ def handle_regenerate(call: types.CallbackQuery):
     queue_manager.add_to_queue(user_id, state["message"], state["is_link"], is_regen=True)
 
 # ===========================================
+# تردهای پس‌زمینه (نیمه‌شب و آپدیت)
+# ===========================================
+def midnight_reset_notifier():
+    """ترد پس‌زمینه برای ارسال پیام ریست شارژ در ساعت ۱۲ شب به وقت ایران"""
+    logger.info("[SCHEDULER] Midnight reset notifier thread started.")
+    last_reset_date = None
+    
+    while True:
+        try:
+            now = datetime.datetime.now(ZoneInfo("Asia/Tehran"))
+            today = now.date()
+
+            if now.hour == 0 and now.minute == 0 and last_reset_date != today:
+                logger.info("[SCHEDULER] It's midnight. Sending reset notifications...")
+                users_to_notify = list(authenticated_users)
+                
+                for uid in users_to_notify:
+                    try:
+                        bot.send_message(
+                            uid,
+                            "🌅 <b>روز جدید مبارک!</b>\n\n"
+                            "📊 شارژ استفاده روزانه شما به‌طور خودکار ریست شد.\n"
+                            "🔗 حالا می‌توانید ویدیوهای جدید خود را ارسال کنید.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[SCHEDULER] Could not send reset message to {uid}: {e}")
+                
+                last_reset_date = today
+                logger.info("[SCHEDULER] All reset notifications sent.")
+
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Error in midnight notifier: {e}")
+
+        time.sleep(30)
+
+def notify_users_about_update():
+    """بررسی فایل changelog و ارسال پیام به کاربران در صورت وجود نسخه جدید"""
+    try:
+        if not os.path.exists("changelog.txt"):
+            logger.warning("changelog.txt not found.")
+            return
+            
+        with open("changelog.txt", "r", encoding="utf-8") as f:
+            changelog_text = f.read().strip()
+
+        if not changelog_text:
+            return
+
+        current_hash = hashlib.md5(changelog_text.encode('utf-8')).hexdigest()
+        last_hash = premium_manager.get_setting("last_changelog_hash")
+        
+        if last_hash == current_hash:
+            logger.info("[UPDATE] Changelog has not changed. Skipping broadcast.")
+            return
+
+        logger.info("[UPDATE] New changelog detected! Sending broadcast to users...")
+        users = premium_manager.get_all_active_users()
+        
+        message_text = (
+            f"🚀 <b>ربات تولیدر آپدیت شد!</b>\n\n"
+            f"📝 <b>تغییرات جدید:</b>\n<code>{changelog_text}</code>\n\n"
+            f"⚠️ <b>مهم:</b> برای اعمال تغییرات و جلوگیری از قطعی، لطفاً یک بار دستور /start را بزنید."
+        )
+
+        for uid in users:
+            try:
+                bot.send_message(uid, message_text, parse_mode="HTML")
+                time.sleep(0.1) 
+            except Exception as e:
+                logger.warning(f"Could not send update to {uid}: {e}")
+
+        premium_manager.set_setting("last_changelog_hash", current_hash)
+        logger.info("[UPDATE] Broadcast finished successfully.")
+
+    except Exception as e:
+        logger.error(f"[UPDATE] Error in broadcast: {e}")
+
+# ===========================================
 # اجرا و وبهوک
 # ===========================================
 @app.route("/")
@@ -403,9 +441,17 @@ def run_bot():
     """اجرای ربات"""
     queue_manager.start_worker(_process, _mark_free)
 
-        # 👈 شروع ترد زمان‌بند ریست
+    # شروع ترد زمان‌بند ریست
     reset_thread = threading.Thread(target=midnight_reset_notifier, daemon=True)
     reset_thread.start()
+
+    # شروع ترد اطلاع‌رسانی آپدیت (با ۵ ثانیه تاخیر)
+    def delayed_update():
+        time.sleep(5)
+        notify_users_about_update()
+    
+    update_thread = threading.Thread(target=delayed_update, daemon=True)
+    update_thread.start()
 
     if RENDER_EXTERNAL_URL:
         print("[LOG] Running Premium on Render. Setting webhook...")
