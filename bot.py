@@ -183,23 +183,39 @@ def handle_input(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
     
-    # ۱. اگر کاربر احراز هویت نشده است
+    # ۱. بررسی احراز هویت (اگر کاربر توی رم نیست)
     if user_id not in authenticated_users:
-        if not message.text:
-            bot.reply_to(message, "❌ لطفاً ابتدا کد لایسنس خود را به صورت متن ارسال کنید.")
-            return
-
-        # بررسی لایسنس و فعال‌سازی در کلادفلر
-        is_valid, msg = premium_manager.activate_premium(user_id, username, message.text)
         
-        if is_valid:
+        # 👈 اول بریم از دیتابیس کلادفلر چک کنیم (شاید ربات ری‌استارت شده باشه)
+        is_auth, auth_data = premium_manager.check_premium_auth(user_id)
+        
+        if is_auth:
+            # کاربر از قبل لایسنس داشته، فقط از رم پاک شده بود
             authenticated_users.add(user_id)
-            logger.info(f"[LOG] User {user_id} activated premium.")
-            bot.reply_to(message, f"✅ {msg}\n\nحالا لینک یا ویدیوی خود را بفرستید.")
+            logger.info(f"[LOG] User {user_id} re-authenticated from DB after restart.")
+            # کد ادامه پیدا میکنه تا ویدیو/لینک کاربر پردازش بشه
         else:
-            logger.warning(f"[LOG] User {user_id} failed activation.")
-            bot.reply_to(message, f"❌ {msg}\n\nاگر لایسنس ندارید، از کانال ما تهیه کنید.")
-        return
+            # کاربر واقعاً لایسنس فعال نداره
+            if not message.text:
+                bot.reply_to(message, "❌ لطفاً ابتدا کد لایسنس خود را به صورت متن ارسال کنید.")
+                return
+            
+            # اگر کاربر لینک فرستاده بود (نه کد لایسنس)، بهش تذکر بدیم
+            if is_instagram_link(message.text):
+                bot.reply_to(message, "🔒 شما در سیستم احراز هویت نشده‌اید.\nلطفاً برای فعال‌سازی، ابتدا **کد لایسنس** خود را ارسال کنید.")
+                return
+
+            # بررسی لایسنس جدید و فعال‌سازی
+            is_valid, msg = premium_manager.activate_premium(user_id, username, message.text)
+            
+            if is_valid:
+                authenticated_users.add(user_id)
+                logger.info(f"[LOG] User {user_id} activated premium.")
+                bot.reply_to(message, f"✅ {msg}\n\nحالا لینک یا ویدیوی خود را بفرستید.")
+            else:
+                logger.warning(f"[LOG] User {user_id} failed activation.")
+                bot.reply_to(message, f"❌ {msg}\n\nاگر لایسنس ندارید، از کانال ما تهیه کنید.")
+            return
 
     # ۲. اگر کاربر احراز هویت شده، ورودی را بررسی می‌کنیم
     if message.text and is_instagram_link(message.text):
@@ -225,7 +241,6 @@ def handle_input(message: types.Message):
     queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
-    # 👈 پیام جدید بدون نمایش شماره صف
     bot.reply_to(
         message,
         f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت.\n"
