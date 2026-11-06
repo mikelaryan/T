@@ -219,18 +219,17 @@ def handle_input(message: types.Message):
 
     # ۴. اضافه کردن به صف
     if not _mark_busy(user_id):
-        bot.reply_to(message, "⏳ درخواست شما در صف قرار گرفته است.\nلطفاً صبر کنید.")
+        bot.reply_to(message, "⏳ درخواست شما در حال پردازش است.\nلطفاً صبر کنید.")
         return
 
     queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
+    # 👈 پیام جدید بدون نمایش شماره صف
     bot.reply_to(
         message,
-        f"✅ درخواست شما ثبت شد.\n\n"
-        f"📍 **نفر {queue_position} در صف**\n"
-        f"📊 {limit_msg}\n\n"
-        f"⏳ درخواست شما به زودی پردازش می‌شود."
+        f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت.\n"
+        f"📊 {limit_msg}"
     )
 
 # ===========================================
