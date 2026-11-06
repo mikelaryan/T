@@ -115,77 +115,46 @@ def handle_start(message: types.Message):
         )
 
 @bot.message_handler(commands=["help"])
-def handle_help(message: types.Message):
-    text = (
-        "📌 راهنما (نسخه پرمیوم):\n\n"
-        "🔗 لینک پست / ریلز / تیوی اینستاگرام\n"
-        "🎥 فایل ویدیو (mp4 / mov / webm)\n\n"
-        "شما می‌توانید روزانه تعداد مشخصی ویدیو (طبق اشتراک خود) پردازش کنید.\n\n"
-        "دستورات:\n"
-        "/start — شروع\n"
-        "/help — همین راهنما"
-    )
-    bot.send_message(message.chat.id, text)
-
-@bot.message_handler(
-    content_types=["text", "video", "document"],
-    func=lambda m: not (m.text and m.text.startswith("/")),
-)
-def handle_input(message: types.Message):
+def handle_start(message: types.Message):
     user_id = message.from_user.id
-    username = message.from_user.username
+    logger.info(f"[LOG] User {user_id} started the bot.")
     
-    # ۱. اگر کاربر احراز هویت نشده است
-    if user_id not in authenticated_users:
-        if not message.text:
-            bot.reply_to(message, "❌ لطفاً ابتدا کد لایسنس خود را به صورت متن ارسال کنید.")
-            return
+    # چک کردن کش
+    if user_id in authenticated_users:
+        bot.send_message(
+            message.chat.id, 
+            f"سلام مجدد {message.from_user.first_name} 👋\n\n"
+            "✅ اشتراک شما فعال است.\n\n"
+            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید."
+        )
+        return
 
-        # بررسی لایسنس و فعال‌سازی در کلادفلر
-        is_valid, msg = premium_manager.activate_premium(user_id, username, message.text)
+    # چک کردن دیتابیس کلادفلر
+    is_valid, data = premium_manager.check_premium_auth(user_id)
+    if is_valid:
+        authenticated_users.add(user_id)
+        user_info = data  # دیکشنری اطلاعات کاربر
         
-        if is_valid:
-            authenticated_users.add(user_id)
-            logger.info(f"[LOG] User {user_id} activated premium.")
-            bot.reply_to(message, f"✅ {msg}\n\nحالا لینک یا ویدیوی خود را بفرستید.")
-        else:
-            logger.warning(f"[LOG] User {user_id} failed activation.")
-            bot.reply_to(message, f"❌ {msg}\n\nاگر لایسنس ندارید، از کانال ما تهیه کنید.")
-        return
-
-    # ۲. اگر کاربر احراز هویت شده، ورودی را بررسی میکنیم
-    if message.text and is_instagram_link(message.text):
-        is_link = True
-    elif is_video_file(message):
-        is_link = False
+        # 👈 تبدیل تاریخ میلادی به شمسی
+        raw_expiry = user_info.get('expiry_date')
+        jalali_expiry = premium_manager.to_jalali(raw_expiry)
+        
+        bot.send_message(
+            message.chat.id, 
+            f"سلام مجدد {message.from_user.first_name} 👋\n\n"
+            f"✅ اشتراک شما فعال است (تا تاریخ: {jalali_expiry}).\n"
+            f"📊 امروز: {user_info.get('used_today')} از {user_info.get('daily_limit')} استفاده شده.\n\n"
+            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید."
+        )
     else:
-        logger.warning(f"[LOG] Invalid input from user {user_id}.")
-        bot.reply_to(message, "❌ ورودی نامعتبره!\nلطفاً یه لینک اینستاگرام معتبر یا یه فایل ویدیو بفرست.")
-        return
-
-    # ۳. چک کردن محدودیت روزانه (قبل از صف)
-    is_allowed, limit_msg = premium_manager.check_daily_limit(user_id)
-    if not is_allowed:
-        bot.reply_to(message, f"⚠️ {limit_msg}")
-        return
-
-    # ۴. اضافه کردن به صف
-    if not _mark_busy(user_id):
-        bot.reply_to(message, "⏳ درخواست شما در صف قرار گرفته است.\nلطفاً صبر کنید.")
-        return
-
-    # 👈 پارامتر is_regen=False به صورت صریح اضافه شد
-    queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
-    logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
-    
-    bot.reply_to(
-        message,
-        f"✅ درخواست شما ثبت شد.\n\n"
-        f"📍 **نفر {queue_position} در صف**\n"
-        f"📊 {limit_msg}\n\n"
-        f"⏳ درخواست شما به زودی پردازش می‌شود."
-    )
-
+        # کاربر جدید است
+        bot.send_message(
+            message.chat.id, 
+            f"سلام {message.from_user.first_name} 👋\n\n"
+            "🌟 به ربات پرمیوم **تولیدر** خوش آمدید!\n\n"
+            "🔒 برای استفاده از ربات، لطفاً **کد لایسنس** خود را ارسال کنید.\n"
+            "🎫 اگر کد لایسنس ندارید، می‌توانید آن را از ما تهیه کنید."
+        )
 # ===========================================
 # پردازش اصلی
 # ===========================================
