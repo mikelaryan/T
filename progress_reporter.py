@@ -30,7 +30,12 @@ class ProgressReporter:
         self.pct = 0.0
 
         try:
-            sent = bot.send_message(chat_id, "⏳ در حال شروع پردازش...", parse_mode="HTML")
+            # 👈 پیام اولیه با متن جدید
+            sent = bot.send_message(
+                chat_id, 
+                "⏳ <b>در حال شروع پردازش...</b>\n<i>(ممکن است چند دقیقه طول بکشد)</i>", 
+                parse_mode="HTML"
+            )
             self.message_id = sent.message_id
         except Exception as e:
             logger.warning(f"ارسال پیام اولیه ناموفق بود: {e}")
@@ -41,7 +46,11 @@ class ProgressReporter:
         return "🟩" * filled + "⬜" * (width - filled)
 
     def _render_message(self) -> str:
-        lines = ["🚀 <b>عملیات ساخت زیرنویس</b>\n"]
+        # 👈 اضافه شدن خط دوم با فونت کج
+        lines = [
+            "🚀 <b>عملیات ساخت زیرنویس</b>\n",
+            "<i>(ممکن است چند دقیقه طول بکشد)</i>\n"
+        ]
         
         for i, stage_name in enumerate(self.STAGES):
             if i < self.current_stage:
