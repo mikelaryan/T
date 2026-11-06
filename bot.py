@@ -10,6 +10,8 @@ import threading
 import telebot
 from telebot import types
 from flask import Flask, request
+import datetime
+from zoneinfo import ZoneInfo
 
 import config
 import queue_manager
@@ -72,6 +74,50 @@ def is_video_file(message: types.Message) -> bool:
     if message.document and (message.document.mime_type or "").startswith("video/"):
         return True
     return False
+
+
+# ===========================================
+# زمان‌بند ریست نیمه‌شب
+# ===========================================
+def midnight_reset_notifier():
+    """ترد پس‌زمینه برای ارسال پیام ریست شارژ در ساعت ۱۲ شب به وقت ایران"""
+    logger.info("[SCHEDULER] Midnight reset notifier thread started.")
+    last_reset_date = None
+    
+    while True:
+        try:
+            # گرفتن زمان دقیق فعلی به وقت تهران
+            now = datetime.datetime.now(ZoneInfo("Asia/Tehran"))
+            today = now.date()
+
+            # اگر ساعت دقیقاً 00:00 بود و برای امروز هنوز پیام نداده‌ایم
+            if now.hour == 0 and now.minute == 0 and last_reset_date != today:
+                logger.info("[SCHEDULER] It's midnight. Sending reset notifications...")
+                
+                # کپی گرفتن از لیست برای جلوگیری از خطای تغییر سایز حین حلقه
+                users_to_notify = list(authenticated_users)
+                
+                for uid in users_to_notify:
+                    try:
+                        bot.send_message(
+                            uid,
+                            "🌅 <b>روز جدید مبارک!</b>\n\n"
+                            "📊 شارژ استفاده روزانه شما به‌طور خودکار ریست شد.\n"
+                            "🔗 حالا می‌توانید ویدیوهای جدید خود را ارسال کنید.",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        # اگر کاربر ربات را بلاک کرده باشد، خطا را نادیده می‌گیریم
+                        logger.warning(f"[SCHEDULER] Could not send reset message to {uid}: {e}")
+                
+                last_reset_date = today
+                logger.info("[SCHEDULER] All reset notifications sent.")
+
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Error in midnight notifier: {e}")
+
+        # هر ۳۰ ثانیه یکبار چک می‌کند تا بار روی سرور کم باشد
+        time.sleep(30)
 
 # ===========================================
 # هندلرها
@@ -342,6 +388,10 @@ def getMessage():
 def run_bot():
     """اجرای ربات"""
     queue_manager.start_worker(_process, _mark_free)
+
+        # 👈 شروع ترد زمان‌بند ریست
+    reset_thread = threading.Thread(target=midnight_reset_notifier, daemon=True)
+    reset_thread.start()
 
     if RENDER_EXTERNAL_URL:
         print("[LOG] Running Premium on Render. Setting webhook...")
