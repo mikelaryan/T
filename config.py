@@ -21,6 +21,10 @@ GEMINI_API_KEY = os.getenv(
     "YOUR_GEMINI_API_KEY_HERE" # 👈 کلید جمینای خودت رو اینجا بذار
 )
 
+GAPGPT_API_KEY = os.getenv(
+    "GAPGPT_API_KEY",
+    "YOUR_GAPGPT_API_KEY_HERE" # تنظیمات GapGPT (پولی - برای تولید مجدد و آخرین سنگر)
+)
 
 # ===========================================
 # تنظیمات اختیاری
