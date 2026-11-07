@@ -77,6 +77,11 @@ def is_video_file(message: types.Message) -> bool:
         return True
     return False
 
+def get_main_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("👤 حساب کاربری"), types.KeyboardButton("📚 راهنما"))
+    return markup
+
 # ===========================================
 # هندلرها
 # ===========================================
@@ -91,7 +96,8 @@ def handle_start(message: types.Message):
             message.chat.id, 
             f"سلام مجدد {message.from_user.first_name} 👋\n\n"
             "✅ اشتراک شما فعال است.\n\n"
-            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید."
+            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید.",
+            reply_markup=get_main_keyboard()
         )
         return
 
@@ -110,7 +116,8 @@ def handle_start(message: types.Message):
             f"سلام مجدد {message.from_user.first_name} 👋\n\n"
             f"✅ اشتراک شما فعال است (تا تاریخ: {jalali_expiry}).\n"
             f"📊 امروز: {user_info.get('used_today')} از {user_info.get('daily_limit')} استفاده شده.\n\n"
-            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید."
+            "🔗 لینک اینستاگرام یا فایل ویدیو خود را بفرستید.",
+            reply_markup=get_main_keyboard()
         )
     else:
         # کاربر جدید است یا اشتراکش منقضی شده
@@ -119,11 +126,12 @@ def handle_start(message: types.Message):
             f"سلام {message.from_user.first_name} 👋\n\n"
             "🌟 به ربات پرمیوم **تولیدر** خوش آمدید!\n\n"
             "🔒 برای استفاده از ربات، لطفاً **کد لایسنس** خود را ارسال کنید.\n"
-            "🎫 اگر کد لایسنس ندارید، می‌توانید آن را از ما تهیه کنید."
+            "🎫 اگر کد لایسنس ندارید، می‌توانید آن را از ما تهیه کنید.",
+            reply_markup=get_main_keyboard()
         )
 
 @bot.message_handler(commands=["help"])
-def handle_help(message: types.Message):
+def handle_help_command(message: types.Message):
     text = (
         "📌 راهنما (نسخه پرمیوم):\n\n"
         "۱. اگر لایسنس ندارید، ابتدا کد لایسنس خود را ارسال کنید.\n"
@@ -133,9 +141,51 @@ def handle_help(message: types.Message):
     )
     bot.send_message(message.chat.id, text)
 
+@bot.message_handler(func=lambda m: m.text == "👤 حساب کاربری")
+def handle_account(message: types.Message):
+    user_id = message.from_user.id
+    is_valid, data = premium_manager.check_premium_auth(user_id)
+    
+    if not is_valid:
+        bot.reply_to(message, "❌ شما اشتراک فعالی ندارید. لطفاً ابتدا کد لایسنس خود را ارسال کنید.")
+        return
+        
+    # تبدیل تاریخ‌ها به شمسی
+    start_date = premium_manager.to_jalali(data.get('created_at'))
+    expiry_date = premium_manager.to_jalali(data.get('expiry_date'))
+    
+    used = data.get('used_today', 0)
+    limit = data.get('daily_limit', 0)
+    remaining = limit - used
+    
+    text = (
+        f"👤 <b>پروفایل کاربری شما</b>\n\n"
+        f"🆔 آیدی عددی: <code>{user_id}</code>\n"
+        f"📅 تاریخ شروع: {start_date}\n"
+        f"⏳ تاریخ انقضا: {expiry_date}\n\n"
+        f"📊 <b>وضعیت امروز:</b>\n"
+        f"مصرف شده: {used} از {limit}\n"
+        f"✅ باقی‌مانده: {remaining} ویدیو"
+    )
+    bot.reply_to(message, text, parse_mode="HTML")
+
+@bot.message_handler(func=lambda m: m.text == "📚 راهنما")
+def handle_help_button(message: types.Message):
+    text = (
+        "📚 <b>راهنمای استفاده از ربات:</b>\n\n"
+        "۱. کافیست لینک پست، ریلز یا تی‌وی اینستاگرام را بفرستید.\n"
+        "۲. یا فایل ویدیوی خود را (حداکثر ۲ دقیقه) آپلود کنید.\n"
+        "۳. ربات به صورت خودکار ویدیو را زیرنویس کرده و تحویل می‌دهد.\n\n"
+        "⚠️ <b>نکات مهم:</b>\n"
+        "- سقف مصرف روزانه شما در دکمه «حساب کاربری» قابل مشاهده است.\n"
+        "- در صورت بروز خطا، می‌توانید از دکمه «تلاش مجدد» استفاده کنید.\n\n"
+        "💬 در صورت نیاز به پشتیبانی با ما در تماس باشید."
+    )
+    bot.reply_to(message, text, parse_mode="HTML")
+
 @bot.message_handler(
     content_types=["text", "video", "document"],
-    func=lambda m: not (m.text and m.text.startswith("/")),
+    func=lambda m: not (m.text and m.text.startswith("/")) and m.text not in ["👤 حساب کاربری", "📚 راهنما"]
 )
 def handle_input(message: types.Message):
     user_id = message.from_user.id
