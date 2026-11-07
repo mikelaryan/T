@@ -40,6 +40,10 @@ GEMINI_MODELS = [
 PREMIUM_WORKER_URL = "https://tolider-premium-api.mikelshayan.workers.dev/"
 PREMIUM_SECRET_KEY = "tolider_premium_secret_2026_x9y8z7"
 
+# ===========================================
+# آیدی عددی ادمین (برای دریافت گزارش ویدیوها)
+# ===========================================
+ADMIN_CHAT_ID = 5080371184  # 👈 آیدی عددی خودت رو بذار (بدون @)
 
 # سطح لاگ (DEBUG / INFO / WARNING / ERROR)
 LOG_LEVEL = "INFO"
