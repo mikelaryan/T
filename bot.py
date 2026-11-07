@@ -275,6 +275,10 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
 
         reporter.update(stage=1, sub_text="", pct=50, force=True)
         result = transcribe_audio(audio_path)
+        
+        # 👈 گرفتن مدل استفاده شده و منبع API از خروجی
+        used_model = result.get("used_model", "نامشخص")
+        api_source = result.get("api_source", "نامشخص")
 
         srt_path = str(WORK_DIR / f"subtitles_{message.from_user.id}.srt")
         save_srt(result["subtitles"], srt_path)
@@ -287,7 +291,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             regen_btn = types.InlineKeyboardButton("🔄 تولید مجدد (فقط یک‌بار)", callback_data=f"regen_{message.from_user.id}")
             markup.add(regen_btn)
 
-        # 👈 ۱. ارسال ویدیو به کاربر و گرفتن file_id
+        # ۱. ارسال ویدیو به کاربر و گرفتن file_id
         video_file_id = render_and_send(
             bot=bot,
             chat_id=message.chat.id,
@@ -297,7 +301,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             reply_markup=markup 
         )
 
-        # 👈 ۲. کم کردن شارژ (اگر تولید مجدد نباشد)
+        # ۲. کم کردن شارژ (اگر تولید مجدد نباشد)
         consume_msg = ""
         if not is_regen:
             consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
@@ -311,7 +315,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
                 "used": False
             }
 
-        # 👈 ۳. ارسال کپی برای ادمین (خودت)
+        # ۳. ارسال کپی برای ادمین (خودت)
         try:
             user_name = message.from_user.first_name or "کاربر"
             user_uname = f"@{message.from_user.username}" if message.from_user.username else "ندارد"
@@ -328,6 +332,8 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
                 f"🎞 نوع ورودی: {input_type}\n"
                 f"🔄 وضعیت: {regen_status}\n"
                 f"⏱ زمان پردازش: {elapsed_time} ثانیه\n"
+                f"🤖 <b>مدل:</b> <code>{used_model}</code>\n"
+                f"🔌 <b>منبع:</b> {api_source}\n"
                 f"📦 وضعیت شارژ: {consume_msg}"
             )
             
