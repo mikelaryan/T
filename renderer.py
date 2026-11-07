@@ -224,7 +224,11 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
                 f"[bg][wm]overlay=x=(W-w)/2:y={overlay_y}[out]"
             )
         else:
-            logger.warning(f"⚠️ فایل واترمارک پیدا نشد ({WATERMARK_PATH}).")
+            # 👈 اصلاح لاگ اشتباه برای واترمارک خاموش
+            if not ENABLE_WATERMARK:
+                logger.info("ℹ️ واترمارک در تنظیمات غیرفعال است.")
+            else:
+                logger.warning(f"⚠️ فایل واترمارک پیدا نشد ({WATERMARK_PATH}).")
             filter_complex = f"[0:v]{sub_filter}[out]"
 
         cmd.extend([
@@ -276,14 +280,17 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
             progress.update(stage=2, sub_text="در حال ارسال به تلگرام...", pct=100, extra=f"📦 حجم ویدیو: {size_mb:.1f} MB", force=True)
 
         with open(output_path, "rb") as vf:
-            bot.send_video(
+            # 👈 گرفتن خروجی در متغیر sent_msg
+            sent_msg = bot.send_video(
                 chat_id, vf,
                 caption=f"✨ <b>ویدیوی زیرنویس‌شده آماده شد!</b>\n📦 {size_mb:.1f}MB",
                 parse_mode="HTML",
                 timeout=600,
-                reply_markup=reply_markup  # 👈 این خط اضافه بشه
+                reply_markup=reply_markup
             )
-        return output_path
+            
+        # 👈 برگرداندن file_id ویدیو (به جای مسیر فایل)
+        return sent_msg.video.file_id
 
     finally:
         shutil.rmtree(job_dir, ignore_errors=True)
