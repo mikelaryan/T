@@ -158,9 +158,15 @@ def handle_account(message: types.Message):
     limit = data.get('daily_limit', 0)
     remaining = limit - used
     
+    # 👈 گرفتن اسم و یوزرنیم کاربر از تلگرام
+    first_name = message.from_user.first_name or "کاربر"
+    username = f"@{message.from_user.username}" if message.from_user.username else "ثبت نشده"
+    
     text = (
         f"👤 <b>پروفایل کاربری شما</b>\n\n"
+        f"📛 نام: <b>{first_name}</b>\n"  # 👈 اسم پروفایل اضافه شد
         f"🆔 آیدی عددی: <code>{user_id}</code>\n"
+        f"🔗 یوزرنیم: {username}\n\n"      # 👈 یوزرنیم اضافه شد
         f"📅 تاریخ شروع: {start_date}\n"
         f"⏳ تاریخ انقضا: {expiry_date}\n\n"
         f"📊 <b>وضعیت امروز:</b>\n"
