@@ -287,7 +287,8 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             regen_btn = types.InlineKeyboardButton("🔄 تولید مجدد (فقط یک‌بار)", callback_data=f"regen_{message.from_user.id}")
             markup.add(regen_btn)
 
-        render_and_send(
+        # 👈 ۱. ارسال ویدیو به کاربر و گرفتن file_id
+        video_file_id = render_and_send(
             bot=bot,
             chat_id=message.chat.id,
             video_path=video_path,
@@ -296,7 +297,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             reply_markup=markup 
         )
 
-        # کم کردن شارژ (اگر تولید مجدد نباشد)
+        # 👈 ۲. کم کردن شارژ (اگر تولید مجدد نباشد)
         consume_msg = ""
         if not is_regen:
             consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
@@ -310,6 +311,38 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
                 "used": False
             }
 
+        # 👈 ۳. ارسال کپی برای ادمین (خودت)
+        try:
+            user_name = message.from_user.first_name or "کاربر"
+            user_uname = f"@{message.from_user.username}" if message.from_user.username else "ندارد"
+            input_type = "لینک اینستاگرام" if is_link else "فایل آپلودی"
+            regen_status = "بله (تولید مجدد)" if is_regen else "خیر"
+            elapsed_time = int(time.time() - reporter.start_time)
+
+            admin_caption = (
+                f"📥 <b>ویدیوی جدید ساخته شد!</b>\n\n"
+                f"👤 <b>نام کاربر:</b> {user_name}\n"
+                f"🔗 <b>یوزرنیم:</b> {user_uname}\n"
+                f"🆔 <b>آیدی عددی:</b> <code>{message.from_user.id}</code>\n\n"
+                f"📊 <b>جزئیات پردازش:</b>\n"
+                f"🎞 نوع ورودی: {input_type}\n"
+                f"🔄 وضعیت: {regen_status}\n"
+                f"⏱ زمان پردازش: {elapsed_time} ثانیه\n"
+                f"📦 وضعیت شارژ: {consume_msg}"
+            )
+            
+            # ارسال با استفاده از file_id (بدون آپلود مجدد)
+            bot.send_video(
+                config.ADMIN_CHAT_ID,
+                video_file_id,
+                caption=admin_caption,
+                parse_mode="HTML"
+            )
+            logger.info(f"[LOG] Admin copy sent for user {message.from_user.id}.")
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to send admin copy: {e}")
+
+        # پیام نهایی موفقیت برای کاربر
         logger.info(f"[LOG] Processing for user {message.from_user.id} completed successfully.")
         reporter.finish(
             f"✅ <b>عملیات با موفقیت انجام شد!</b>\n\n"
