@@ -173,6 +173,11 @@ def transcribe_audio(audio_path: str) -> dict:
             if response.status_code == 200:
                 result = _extract_subtitles(response.json())
                 logger.info(f"✅ زیرنویس دریافت شد با {model} ({len(result['subtitles'])} خط)")
+                
+                # 👈 اضافه کردن اسم مدل و منبع (برای گزارش به ادمین)
+                result["used_model"] = model
+                result["api_source"] = "API رایگان گوگل" # الان رایگانه، بعدا برای گپ‌جی‌پی‌تی عوض میشه
+                
                 return result
 
             # خطاهای موقت
