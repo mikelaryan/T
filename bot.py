@@ -274,7 +274,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         video_path, audio_path = process_incoming(bot, message, is_link, progress=reporter)
 
         reporter.update(stage=1, sub_text="", pct=50, force=True)
-        result = transcribe_audio(audio_path)
+        result = transcribe_audio(audio_path, is_regen=is_regen)
         
         # 👈 گرفتن مدل استفاده شده و منبع API از خروجی
         used_model = result.get("used_model", "نامشخص")
