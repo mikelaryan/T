@@ -256,11 +256,10 @@ def handle_input(message: types.Message):
     queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
-    # پیام جدید بدون نمایش شماره صف
+    # 👈 پیام جدید (بدون نمایش limit_msg)
     bot.reply_to(
         message,
-        f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت.\n"
-        f"📊 {limit_msg}"
+        f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت."
     )
 
 # ===========================================
@@ -461,8 +460,7 @@ def midnight_reset_notifier():
                     try:
                         bot.send_message(
                             uid,
-                            "🌅 <b>روز جدید مبارک!</b>\n\n"
-                            "📊 شارژ استفاده روزانه شما به‌طور خودکار ریست شد.\n"
+                            "📊 محدودیت استفاده روزانه شما ریست شد.\n"
                             "🔗 حالا می‌توانید ویدیوهای جدید خود را ارسال کنید.",
                             parse_mode="HTML"
                         )
@@ -476,7 +474,6 @@ def midnight_reset_notifier():
             logger.error(f"[SCHEDULER] Error in midnight notifier: {e}")
 
         time.sleep(30)
-
 def notify_users_about_update():
     """بررسی فایل changelog و ارسال پیام به کاربران در صورت وجود نسخه جدید"""
     try:
