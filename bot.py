@@ -194,6 +194,10 @@ def handle_help_button(message: types.Message):
     content_types=["text", "video", "document"],
     func=lambda m: not (m.text and m.text.startswith("/")) and m.text not in ["👤 حساب کاربری", "📚 راهنما"]
 )
+@bot.message_handler(
+    content_types=["text", "video", "document"],
+    func=lambda m: not (m.text and m.text.startswith("/")) and m.text not in ["👤 حساب کاربری", "📚 راهنما"]
+)
 def handle_input(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
@@ -226,7 +230,21 @@ def handle_input(message: types.Message):
             if is_valid:
                 authenticated_users.add(user_id)
                 logger.info(f"[LOG] User {user_id} activated premium.")
-                bot.reply_to(message, f"✅ {msg}\n\nحالا لینک یا ویدیوی خود را بفرستید.")
+                
+                # 👈 پیام خوش‌آمدگویی پرمیوم
+                welcome_text = (
+                    f"سلام <b>{message.from_user.first_name}</b> عزیز 👋\n\n"
+                    f"✅ <b>لایسنس شما با موفقیت فعال شد!</b> به خانواده بزرگ تولیدر خوش آمدید. 🎉\n\n"
+                    f"✨ <b>از این لحظه شما به امکانات ویژه دسترسی دارید:</b>\n"
+                    f"🎬 پردازش ویدیوهای تا ۲ دقیقه\n"
+                    f"🚫 بدون هیچ‌گونه واترمارک\n"
+                    f"🔄 امکان «تولید مجدد» در صورت نارضایتی\n\n"
+                    f"🎯 <b>چطور شروع کنم؟</b>\n"
+                    f"بسیار ساده است! کافیست <b>لینک اینستاگرام</b> خود را ارسال کنید یا <b>فایل ویدیو</b> را مستقیماً آپلود کنید.\n\n"
+                    f"🚀 همین الان یک لینک بفرست تا اولین ویدیویت را بسازیم!"
+                )
+                bot.reply_to(message, welcome_text, parse_mode="HTML")
+                
             else:
                 logger.warning(f"[LOG] User {user_id} failed activation.")
                 bot.reply_to(message, f"❌ {msg}\n\nاگر لایسنس ندارید، از کانال ما تهیه کنید.")
@@ -256,7 +274,7 @@ def handle_input(message: types.Message):
     queue_position = queue_manager.add_to_queue(user_id, message, is_link, is_regen=False)
     logger.info(f"[LOG] User {user_id} added to queue. Position: {queue_position}")
     
-    # 👈 پیام جدید (بدون نمایش limit_msg)
+    # پیام بدون نمایش شماره صف و شارژ
     bot.reply_to(
         message,
         f"✅ درخواست شما با موفقیت ثبت شد و در صف پردازش قرار گرفت."
