@@ -1,5 +1,5 @@
 """
-ارتباط با هوش مصنوعی — با زمان‌بندی بهینه و مسیریابی هوشمند
+ارتباط با هوش مصنوعی — اولویت ۳.۸، پشتیبان ۳.۶، تایم‌اوت کوتاه برای سرعت بالا
 """
 
 import os
@@ -14,9 +14,6 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# ===========================================
-# پرامپت (تخصصی نقاشی)
-# ===========================================
 SUBTITLE_PROMPT = """
 تو یک متخصص زیرنویس‌نویسی حرفه‌ای هستیتی و یک مترجم و ویراستار تخصصی محتوای آموزشی هنر و نقاشی .
 ورودی تو فقط یک فایل صوتی است. وظیفه‌ات این است:
@@ -102,17 +99,17 @@ def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, dura
         "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"},
     }
 
-    # 👈 تغییر زمان‌بندی: فقط ۲ بار تلاش و تایم‌اوت ۴۵ ثانیه‌ای
+    # 👈 ۲ بار تلاش با تایم‌اوت ۲۰ ثانیه‌ای
     for attempt in range(1, 3): 
         logger.info(f"[{model_name}] تلاش {attempt}/2 — گوگل (رایگان)...")
         try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+            response = requests.post(api_url, headers=headers, json=payload, timeout=20)
             
             if response.status_code == 200:
                 text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
                 result = _extract_subtitles_from_text(text)
                 
-                # 👈 سیستم اعتبارسنجی (اگر ویدیو بالای ۱۵ ثانیه بود و زیرنویس زیر ۳ خط داشت، یعنی مدل خراب کرده)
+                # اعتبارسنجی ناقص نبودن خروجی
                 if duration > 15 and len(result['subtitles']) < 3:
                     logger.warning(f"⚠️ خروجی {model_name} ناقص است ({len(result['subtitles'])} خط). رد می‌شود.")
                     return None
@@ -183,7 +180,7 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
     audio_b64 = _encode_audio(audio_path)
     mime_type = _detect_mime(audio_path)
 
-    # 👈 ۱. اگر تولید مجدد باشد، مستقیم میره سراغ گپ‌جی‌پی‌تی (پولی)
+    # ۱. اگر تولید مجدد باشد، مستقیم میره سراغ گپ‌جی‌پی‌تی (پولی)
     if is_regen:
         logger.info("🔄 درخواست تولید مجدد: مستقیم به API پولی می‌رود.")
         result = _try_gapgpt(audio_b64, mime_type)
@@ -191,12 +188,11 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
             return result
         logger.warning("⚠️ گپ‌جی‌پی‌تی جواب نداد، تلاش با مدل‌های رایگان...")
 
-    # 👈 ۲. ترتیب مدل‌های رایگان
+    # 👈 ۲. ترتیب مدل‌های رایگان (حذف ۳.۷)
     free_models = [
-        "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash-lite"
+        "gemini-3.8-flash",       # اولویت اول (کیفیت بالا)
+        "gemini-3.6-flash",       # پشتیبان (سریع)
+        "gemini-3.5-flash-lite"   # آخرین شانس
     ]
     
     for model in free_models:
@@ -204,7 +200,7 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
         if result: 
             return result
 
-    # 👈 ۳. آخرین سنگر: اگر همه رایگان‌ها خراب بودن، میره سراغ پولی
+    # ۳. آخرین سنگر: اگر همه رایگان‌ها خراب بودن، میره سراغ پولی
     logger.warning("⚠️ تمام مدل‌های رایگان ناموفق بودند. سوییچ به آخرین سنگر (GapGPT)...")
     result = _try_gapgpt(audio_b64, mime_type)
     if result: 
