@@ -1,5 +1,5 @@
 """
-ارتباط با هوش مصنوعی — اولویت ۳.۸، پشتیبان ۳.۶، تایم‌اوت کوتاه برای سرعت بالا
+ارتباط با هوش مصنوعی — اولویت مطلق با GapGPT (پولی)، پشتیبان با مدل‌های رایگان
 """
 
 import os
@@ -14,6 +14,9 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# ===========================================
+# پرامپت
+# ===========================================
 SUBTITLE_PROMPT = """
 تو یک متخصص زیرنویس‌نویسی حرفه‌ای هستیتی و یک مترجم و ویراستار تخصصی محتوای آموزشی هنر و نقاشی .
 ورودی تو فقط یک فایل صوتی است. وظیفه‌ات این است:
@@ -89,54 +92,14 @@ def _sleep_backoff(attempt: int, base: float = 2.0, max_wait: float = 10.0):
     time.sleep(total)
 
 # ===========================================
-# توابع ارتباط با Google (رایگان)
-# ===========================================
-def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, duration: float = 0) -> dict | None:
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-    headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
-    payload = {
-        "contents": [{"parts": [{"text": SUBTITLE_PROMPT}, {"inline_data": {"mime_type": mime_type, "data": audio_b64}}]}],
-        "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"},
-    }
-
-    # 👈 ۲ بار تلاش با تایم‌اوت ۲۰ ثانیه‌ای
-    for attempt in range(1, 3): 
-        logger.info(f"[{model_name}] تلاش {attempt}/2 — گوگل (رایگان)...")
-        try:
-            response = requests.post(api_url, headers=headers, json=payload, timeout=20)
-            
-            if response.status_code == 200:
-                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-                result = _extract_subtitles_from_text(text)
-                
-                # اعتبارسنجی ناقص نبودن خروجی
-                if duration > 15 and len(result['subtitles']) < 3:
-                    logger.warning(f"⚠️ خروجی {model_name} ناقص است ({len(result['subtitles'])} خط). رد می‌شود.")
-                    return None
-
-                result["used_model"] = model_name
-                result["api_source"] = "گوگل (رایگان)"
-                return result
-                
-            logger.warning(f"⚠️ {model_name} → HTTP {response.status_code}")
-            
-        except requests.RequestException as e:
-            logger.warning(f"خطای شبکه ({model_name}): {e}")
-            
-        if attempt < 2:
-            _sleep_backoff(attempt)
-            
-    return None
-
-# ===========================================
-# تابع ارتباط با GapGPT (پولی)
+# تابع ارتباط با GapGPT (پولی - اولویت اول)
 # ===========================================
 def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
     if not getattr(config, "GAPGPT_API_KEY", None) or "YOUR_GAPGPT" in config.GAPGPT_API_KEY:
         logger.error("کلید API گپ‌جی‌پی‌تی تنظیم نشده است.")
         return None
 
-    logger.info("💰 تلاش با GapGPT (پولی)...")
+    logger.info("💰 اولویت اول: تلاش با GapGPT (پولی)...")
     api_url = "https://api.gapgpt.app/v1/chat/completions"
     model_name = "gemini-3.8-flash"
     headers = {"Authorization": f"Bearer {config.GAPGPT_API_KEY}", "Content-Type": "application/json"}
@@ -156,18 +119,58 @@ def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
     }
 
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=300)
+        # تایم‌اوت ۱۲۰ ثانیه برای گپ‌جی‌پی‌تی
+        response = requests.post(api_url, headers=headers, json=payload, timeout=120)
         if response.status_code == 200:
             text = response.json()["choices"][0]["message"]["content"]
             result = _extract_subtitles_from_text(text)
+            logger.info(f"✅ موفق با GapGPT ({model_name}) ({len(result['subtitles'])} خط)")
             result["used_model"] = model_name
             result["api_source"] = "GapGPT (پولی)"
             return result
         else:
             logger.error(f"خطای GapGPT: {response.status_code} - {response.text[:200]}")
     except Exception as e:
-        logger.error(f"خطای شبکه در GapGPT: {e}")
+        logger.error(f"خطای شبکه یا تایم‌اوت در GapGPT: {e}")
         
+    return None
+
+# ===========================================
+# تابع ارتباط با Google (رایگان - پشتیبان)
+# ===========================================
+def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, duration: float = 0) -> dict | None:
+    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
+    payload = {
+        "contents": [{"parts": [{"text": SUBTITLE_PROMPT}, {"inline_data": {"mime_type": mime_type, "data": audio_b64}}]}],
+        "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"},
+    }
+
+    for attempt in range(1, 3): # ۲ تلاش
+        logger.info(f"[{model_name}] تلاش {attempt}/2 — گوگل (رایگان - پشتیبان)...")
+        try:
+            response = requests.post(api_url, headers=headers, json=payload, timeout=20)
+            
+            if response.status_code == 200:
+                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+                result = _extract_subtitles_from_text(text)
+                
+                # اعتبارسنجی
+                if duration > 15 and len(result['subtitles']) < 3:
+                    logger.warning(f"⚠️ خروجی {model_name} ناقص است. رد می‌شود.")
+                    return None
+
+                result["used_model"] = model_name
+                result["api_source"] = "گوگل (رایگان)"
+                return result
+                
+            logger.warning(f"⚠️ {model_name} → HTTP {response.status_code}")
+        except requests.RequestException as e:
+            logger.warning(f"خطای شبکه ({model_name}): {e}")
+            
+        if attempt < 2:
+            _sleep_backoff(attempt)
+            
     return None
 
 # ===========================================
@@ -180,19 +183,18 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
     audio_b64 = _encode_audio(audio_path)
     mime_type = _detect_mime(audio_path)
 
-    # ۱. اگر تولید مجدد باشد، مستقیم میره سراغ گپ‌جی‌پی‌تی (پولی)
-    if is_regen:
-        logger.info("🔄 درخواست تولید مجدد: مستقیم به API پولی می‌رود.")
-        result = _try_gapgpt(audio_b64, mime_type)
-        if result: 
-            return result
-        logger.warning("⚠️ گپ‌جی‌پی‌تی جواب نداد، تلاش با مدل‌های رایگان...")
+    # 👈 ۱. اولویت اول: گپ‌جی‌پی‌تی (برای همه درخواست‌ها، چه عادی چه تولید مجدد)
+    result = _try_gapgpt(audio_b64, mime_type)
+    if result:
+        return result
+    
+    logger.warning("⚠️ گپ‌جی‌پی‌تی پاسخ نداد یا قطع بود. تلاش با مدل‌های رایگان...")
 
-    # 👈 ۲. ترتیب مدل‌های رایگان (حذف ۳.۷)
+    # 👈 ۲. اولویت‌های بعدی: مدل‌های رایگان گوگل
     free_models = [
-        "gemini-3.8-flash",       # اولویت اول (کیفیت بالا)
-        "gemini-3.6-flash",       # پشتیبان (سریع)
-        "gemini-3.5-flash-lite"   # آخرین شانس
+        "gemini-3.8-flash",       
+        "gemini-3.6-flash",       
+        "gemini-3.5-flash-lite"   
     ]
     
     for model in free_models:
@@ -200,10 +202,5 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
         if result: 
             return result
 
-    # ۳. آخرین سنگر: اگر همه رایگان‌ها خراب بودن، میره سراغ پولی
-    logger.warning("⚠️ تمام مدل‌های رایگان ناموفق بودند. سوییچ به آخرین سنگر (GapGPT)...")
-    result = _try_gapgpt(audio_b64, mime_type)
-    if result: 
-        return result
-
-    raise RuntimeError("همه مدل‌ها ناموفق بودند. لطفاً بعداً تلاش کنید.")
+    # 👈 ۳. اگر همه خراب بودند، خطای اختصاصی بده تا ربات پیام مناسب بفرسته
+    raise RuntimeError("ALL_AI_FAILED")
