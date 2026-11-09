@@ -284,6 +284,7 @@ def handle_input(message: types.Message):
 # پردازش اصلی
 # ===========================================
 def _process(message: types.Message, is_link: bool, is_regen: bool = False):
+    # 👈 پارامتر is_regen برای هماهنگی با صف نگه داشته شده، ولی دیگه استفاده نمیشه
     logger.info(f"[LOG] Starting main processing for user {message.from_user.id}.")
     reporter = ProgressReporter(bot, message.chat.id)
 
@@ -293,7 +294,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         reporter.update(stage=1, sub_text="", pct=50, force=True)
         result = transcribe_audio(audio_path, is_regen=is_regen)
         
-        # 👈 گرفتن مدل استفاده شده و منبع API از خروجی
+        # گرفتن مدل و منبع
         used_model = result.get("used_model", "نامشخص")
         api_source = result.get("api_source", "نامشخص")
 
@@ -301,14 +302,10 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         save_srt(result["subtitles"], srt_path)
         reporter.update(stage=1, sub_text="", pct=100, force=True)
 
-        # ساخت دکمه تولید مجدد (فقط اگر درخواست اول باشد، نه خود تولید مجدد)
+        # 👈 دکمه‌ای برای کاربر ساخته نمی‌شود (markup=None)
         markup = None
-        if not is_regen:
-            markup = types.InlineKeyboardMarkup()
-            regen_btn = types.InlineKeyboardButton("🔄 تولید مجدد (فقط یک‌بار)", callback_data=f"regen_{message.from_user.id}")
-            markup.add(regen_btn)
 
-        # ۱. ارسال ویدیو به کاربر و گرفتن file_id
+        # ۱. ارسال ویدیو به کاربر
         video_file_id = render_and_send(
             bot=bot,
             chat_id=message.chat.id,
@@ -318,26 +315,17 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             reply_markup=markup 
         )
 
-        # ۲. کم کردن شارژ (اگر تولید مجدد نباشد)
+        # ۲. کم کردن شارژ
         consume_msg = ""
-        if not is_regen:
-            consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
-            if consume_ok:
-                logger.info(f"[LOG] Limit consumed successfully. {consume_msg}")
-            
-            # ذخیره اطلاعات برای دکمه تولید مجدد
-            user_regenerate_state[message.from_user.id] = {
-                "message": message,
-                "is_link": is_link,
-                "used": False
-            }
+        consume_ok, consume_msg = premium_manager.consume_daily_limit(message.from_user.id)
+        if consume_ok:
+            logger.info(f"[LOG] Limit consumed successfully. {consume_msg}")
 
         # ۳. ارسال کپی برای ادمین (خودت)
         try:
             user_name = message.from_user.first_name or "کاربر"
             user_uname = f"@{message.from_user.username}" if message.from_user.username else "ندارد"
             input_type = "لینک اینستاگرام" if is_link else "فایل آپلودی"
-            regen_status = "بله (تولید مجدد)" if is_regen else "خیر"
             elapsed_time = int(time.time() - reporter.start_time)
 
             admin_caption = (
@@ -347,14 +335,12 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
                 f"🆔 <b>آیدی عددی:</b> <code>{message.from_user.id}</code>\n\n"
                 f"📊 <b>جزئیات پردازش:</b>\n"
                 f"🎞 نوع ورودی: {input_type}\n"
-                f"🔄 وضعیت: {regen_status}\n"
                 f"⏱ زمان پردازش: {elapsed_time} ثانیه\n"
                 f"🤖 <b>مدل:</b> <code>{used_model}</code>\n"
                 f"🔌 <b>منبع:</b> {api_source}\n"
                 f"📦 وضعیت شارژ: {consume_msg}"
             )
             
-            # ارسال با استفاده از file_id (بدون آپلود مجدد)
             bot.send_video(
                 config.ADMIN_CHAT_ID,
                 video_file_id,
@@ -378,13 +364,14 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         logger.exception(f"[ERROR] Processing error for user {message.from_user.id}: {e}")
         user_last_inputs[message.from_user.id] = message
         
+        # 👈 دکمه تلاش مجدد برای خطاها
         markup = types.InlineKeyboardMarkup()
         retry_btn = types.InlineKeyboardButton("🔄 تلاش مجدد", callback_data=f"retry_{message.from_user.id}")
         markup.add(retry_btn)
         
         err_str = str(e)
         
-        # 👈 تشخیص خطای قطعی همزمان گپ‌جی‌پی‌تی و مدل‌های رایگان
+        # تشخیص خطای قطعی همزمان گپ‌جی‌پی‌تی و مدل‌های رایگان
         if err_str == "ALL_AI_FAILED":
             friendly_error = (
                 "⚠️ <b>اختلال موقت در سرورهای هوش مصنوعی</b>\n\n"
@@ -397,7 +384,6 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
             friendly_error = err_str[:300].replace("<", "&lt;").replace(">", "&gt;")
             
         reporter.error(f"❌ <b>خطا در پردازش:</b>\n\n{friendly_error}", reply_markup=markup)
-
 # ===========================================
 # دکمه‌های شیشه‌ای (تلاش مجدد و تولید مجدد)
 # ===========================================
