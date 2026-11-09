@@ -383,7 +383,15 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         markup.add(retry_btn)
         
         err_str = str(e)
-        if "503" in err_str or "UNAVAILABLE" in err_str or "همه مدل‌ها ناموفق بودند" in err_str:
+        
+        # 👈 تشخیص خطای قطعی همزمان گپ‌جی‌پی‌تی و مدل‌های رایگان
+        if err_str == "ALL_AI_FAILED":
+            friendly_error = (
+                "⚠️ <b>اختلال موقت در سرورهای هوش مصنوعی</b>\n\n"
+                "متأسفانه در حال حاضر هم سرورهای پولی و هم رایگان پاسخگو نیستند.\n"
+                "لطفاً چند دقیقه دیگر دکمه «تلاش مجدد» را بزنید یا در صورت تکرار با پشتیبانی در ارتباط باشید."
+            )
+        elif "503" in err_str or "UNAVAILABLE" in err_str:
             friendly_error = "⚠️ <b>سرورهای هوش مصنوعی در حال حاضر با ترافیک بالا مواجه هستند.</b>\n\nلطفاً چند لحظه صبر کنید و دکمه تلاش مجدد را بزنید."
         else:
             friendly_error = err_str[:300].replace("<", "&lt;").replace(">", "&gt;")
