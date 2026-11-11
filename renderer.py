@@ -209,13 +209,11 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
             "-i", video_path,
         ]
 
-        # 👈 چک میکنه هم فایل وجود داشته باشه، هم توی تنظیمات فعال شده باشه
         has_wm = ENABLE_WATERMARK and os.path.exists(WATERMARK_PATH)
         
         if has_wm:
             cmd.extend(["-i", WATERMARK_PATH])
             wm_target_h = max(30, int(v_h * WATERMARK_HEIGHT_RATIO))
-            
             overlay_y = f"H-{margin_bottom}+{WATERMARK_GAP}"
             
             filter_complex = (
@@ -224,20 +222,20 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
                 f"[bg][wm]overlay=x=(W-w)/2:y={overlay_y}[out]"
             )
         else:
-            # 👈 اصلاح لاگ اشتباه برای واترمارک خاموش
             if not ENABLE_WATERMARK:
                 logger.info("ℹ️ واترمارک در تنظیمات غیرفعال است.")
             else:
                 logger.warning(f"⚠️ فایل واترمارک پیدا نشد ({WATERMARK_PATH}).")
             filter_complex = f"[0:v]{sub_filter}[out]"
 
+        # اجرای رندر اولیه
         cmd.extend([
             "-filter_complex", filter_complex,
             "-map", "[out]",
             "-map", "0:a?",
             "-c:v", "libx264",
             "-preset", "ultrafast",
-            "-crf", "23",
+            "-crf", "23",  # کیفیت اولیه بالا
             "-c:a", "copy",
             "-progress", "pipe:1",
             "-loglevel", "error",
@@ -245,7 +243,7 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
         ])
 
         if progress:
-            progress.update(stage=1, sub_text="در حال چسباندن زیرنویس و واترمارک...", pct=0, force=True)
+            progress.update(stage=1, sub_text="در حال چسباندن زیرنویس روی ویدیو...", pct=0, force=True)
 
         err_tmp = tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".log", encoding="utf-8")
         err_path = err_tmp.name
@@ -275,12 +273,36 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
             raise RuntimeError("فایل خروجی ساخته نشد.")
 
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        logger.info(f"🎬 حجم اولیه ویدیو: {size_mb:.1f}MB")
+
+        # 👈 سیستم فشرده‌سازی خودکار در صورت عبور از ۵۰ مگابایت
+        if size_mb > 50:
+            logger.warning(f"⚠️ حجم ویدیو ({size_mb:.1f}MB) بیشتر از ۵۰ مگابایت است. در حال فشرده‌سازی...")
+            compressed_path = os.path.join(job_dir, "final_compressed.mp4")
+            
+            cmd_compress = [
+                "ffmpeg", "-y", "-nostdin", "-i", output_path,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",  # کیفیت پایین‌تر برای کاهش حجم
+                "-c:a", "copy", compressed_path,
+            ]
+            
+            subprocess.run(cmd_compress, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=FFMPEG_TIMEOUT)
+            
+            if os.path.exists(compressed_path):
+                os.replace(compressed_path, output_path) # جایگزینی فایل اصلی با فشرده‌شده
+                size_mb = os.path.getsize(output_path) / (1024 * 1024)
+                logger.info(f"✅ فشرده‌سازی موفقیت‌آمیز بود. حجم جدید: {size_mb:.1f}MB")
+            else:
+                logger.error("❌ فشرده‌سازی ناموفق بود.")
+
+        # چک نهایی (اگر باز هم بالای ۵۰ مگ بود، ارور بده تا در bot.py مدیریت شود)
+        if size_mb > 50:
+            raise ValueError("VIDEO_TOO_LARGE")
 
         if progress:
             progress.update(stage=2, sub_text="در حال ارسال به تلگرام...", pct=100, extra=f"📦 حجم ویدیو: {size_mb:.1f} MB", force=True)
 
         with open(output_path, "rb") as vf:
-            # 👈 گرفتن خروجی در متغیر sent_msg
             sent_msg = bot.send_video(
                 chat_id, vf,
                 caption=f"✨ <b>ویدیوی زیرنویس‌شده آماده شد!</b>\n📦 {size_mb:.1f}MB",
@@ -289,7 +311,6 @@ def render_and_send(bot, chat_id, video_path, subtitles, progress=None, reply_ma
                 reply_markup=reply_markup
             )
             
-        # 👈 برگرداندن file_id ویدیو (به جای مسیر فایل)
         return sent_msg.video.file_id
 
     finally:
