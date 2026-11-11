@@ -115,7 +115,7 @@ def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
 
     try:
         # تایم‌اوت ۱۲۰ ثانیه برای گپ‌جی‌پی‌تی
-        response = requests.post(api_url, headers=headers, json=payload, timeout=120)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=350)
         if response.status_code == 200:
             text = response.json()["choices"][0]["message"]["content"]
             result = _extract_subtitles_from_text(text)
