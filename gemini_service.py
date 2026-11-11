@@ -69,52 +69,41 @@ def _detect_mime(audio_path: str) -> str:
     }.get(ext, "audio/wav")
 
 def _extract_subtitles_from_text(text: str) -> dict:
-    """استخراج فوق مقاوم JSON از پاسخ هوش مصنوعی"""
-    if not text:
-        raise ValueError("پاسخ خالی از هوش مصنوعی دریافت شد.")
-
-    # 👈 ۱. تمیزکاری اولیه: حذف مارک‌داون و کاراکترهای اضافی
+    """استخراج فوق مقاوم JSON"""
+    if not text: raise ValueError("پاسخ خالی دریافت شد.")
+    
     cleaned = text.strip()
-    if "```json" in cleaned:
-        cleaned = cleaned.split("```json")[1].split("```")[0]
-    elif "```" in cleaned:
-        cleaned = cleaned.split("```")[1].split("```")[0]
+    if "```json" in cleaned: cleaned = cleaned.split("```json")[1].split("```")[0]
+    elif "```" in cleaned: cleaned = cleaned.split("```")[1].split("```")[0]
+    
+    # 👈 پاک کردن تمام Enter ها برای جلوگیری از خرابی JSON
+    cleaned = cleaned.replace("\n", "").replace("\r", "")
 
-    cleaned = cleaned.strip()
+    start_idx = cleaned.find('{')
+    end_idx = cleaned.rfind('}')
+    if start_idx != -1 and end_idx != -1:
+        cleaned = cleaned[start_idx:end_idx+1]
 
-    # 👈 ۲. تلاش اول: پارس عادی با نادیده گرفتن کاراکترهای کنترلی
     try:
         parsed = json.loads(cleaned, strict=False)
-    except json.JSONDecodeError:
-        # 👈 ۳. تلاش دوم: پیدا کردن اولین { و آخرین } (حتی اگر متن اضافه وجود داشته باشه)
-        start_idx = cleaned.find('{')
-        end_idx = cleaned.rfind('}')
-        
-        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-            json_substring = cleaned[start_idx:end_idx+1]
-            try:
-                parsed = json.loads(json_substring, strict=False)
-            except json.JSONDecodeError as e:
-                logger.error(f"خطای JSON پس از استخراج: {e}")
-                logger.error(f"متن خام دریافتی: {text[:500]}")
-                raise ValueError("فرمت پاسخ هوش مصنوعی نامعتبر است.")
-        else:
-            logger.error(f"هیچ آکولادی در پاسخ پیدا نشد. متن خام: {text[:500]}")
-            raise ValueError("پاسخ هوش مصنوعی حاوی JSON نیست.")
-
-    # 👈 ۴. بررسی ساختار داخلی
+    except json.JSONDecodeError as e:
+        logger.error(f"خطای پارس JSON: {e} | متن خام: {text[:300]}")
+        raise ValueError("فرمت پاسخ هوش مصنوعی نامعتبر است.")
+    
     subtitles = parsed.get("subtitles")
     if not isinstance(subtitles, list) or not subtitles:
-        raise ValueError("پاسخ حاوی کلید subtitles معتبر نیست.")
-        
+        raise ValueError("کلید subtitles معتبر نیست.")
     return parsed
 
-# ===========================================
-# تابع ارتباط با GapGPT (پولی - اولویت اول)
-# ===========================================
+# 👈 این تابعی بود که جا افتاده بود
+def _sleep_backoff(attempt: int, base: float = 2.0, max_wait: float = 10.0):
+    wait = min(base * (2 ** (attempt - 1)), max_wait)
+    total = wait + random.uniform(0, 1.0)
+    logger.info(f"⏳ {total:.1f} ثانیه صبر می‌کنم...")
+    time.sleep(total)
+
 def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
     if not getattr(config, "GAPGPT_API_KEY", None) or "YOUR_GAPGPT" in config.GAPGPT_API_KEY:
-        logger.error("کلید API گپ‌جی‌پی‌تی تنظیم نشده است.")
         return None
 
     logger.info("💰 اولویت اول: تلاش با GapGPT (پولی)...")
@@ -124,38 +113,26 @@ def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
     
     payload = {
         "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": SUBTITLE_PROMPT},
-                    {"type": "input_audio", "input_audio": {"data": audio_b64, "format": mime_type.split("/")[-1]}}
-                ]
-            }
-        ],
+        "messages": [{"role": "user", "content": [{"type": "text", "text": SUBTITLE_PROMPT}, {"type": "input_audio", "input_audio": {"data": audio_b64, "format": mime_type.split("/")[-1]}}]}],
         "response_format": {"type": "json_object"}
     }
 
     try:
-        # تایم‌اوت ۱۲۰ ثانیه برای گپ‌جی‌پی‌تی
-        response = requests.post(api_url, headers=headers, json=payload, timeout=350)
+        # تایم‌اوت ۳۰۰ ثانیه (چون پولیه و نباید هدر بره)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=300)
         if response.status_code == 200:
             text = response.json()["choices"][0]["message"]["content"]
             result = _extract_subtitles_from_text(text)
-            logger.info(f"✅ موفق با GapGPT ({model_name}) ({len(result['subtitles'])} خط)")
             result["used_model"] = model_name
             result["api_source"] = "GapGPT (پولی)"
+            logger.info(f"✅ موفق با GapGPT ({len(result['subtitles'])} خط)")
             return result
         else:
             logger.error(f"خطای GapGPT: {response.status_code} - {response.text[:200]}")
     except Exception as e:
-        logger.error(f"خطای شبکه یا تایم‌اوت در GapGPT: {e}")
-        
+        logger.error(f"خطای GapGPT: {e}")
     return None
 
-# ===========================================
-# تابع ارتباط با Google (رایگان - پشتیبان)
-# ===========================================
 def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, duration: float = 0) -> dict | None:
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
@@ -164,36 +141,27 @@ def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, dura
         "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"},
     }
 
-    for attempt in range(1, 3): # ۲ تلاش
-        logger.info(f"[{model_name}] تلاش {attempt}/2 — گوگل (رایگان - پشتیبان)...")
+    for attempt in range(1, 3):
+        logger.info(f"[{model_name}] تلاش {attempt}/2 — گوگل (رایگان)...")
         try:
             response = requests.post(api_url, headers=headers, json=payload, timeout=20)
-            
             if response.status_code == 200:
                 text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
                 result = _extract_subtitles_from_text(text)
                 
-                # اعتبارسنجی
                 if duration > 15 and len(result['subtitles']) < 3:
-                    logger.warning(f"⚠️ خروجی {model_name} ناقص است. رد می‌شود.")
+                    logger.warning(f"⚠️ خروجی {model_name} ناقص است.")
                     return None
 
                 result["used_model"] = model_name
                 result["api_source"] = "گوگل (رایگان)"
                 return result
-                
             logger.warning(f"⚠️ {model_name} → HTTP {response.status_code}")
         except requests.RequestException as e:
             logger.warning(f"خطای شبکه ({model_name}): {e}")
-            
-        if attempt < 2:
-            _sleep_backoff(attempt)
-            
+        if attempt < 2: _sleep_backoff(attempt)
     return None
 
-# ===========================================
-# تابع اصلی
-# ===========================================
 def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 0) -> dict:
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"فایل صوتی پیدا نشد: {audio_path}")
@@ -201,22 +169,17 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
     audio_b64 = _encode_audio(audio_path)
     mime_type = _detect_mime(audio_path)
 
-    # 👈 ۱. اولویت اول: گپ‌جی‌پی‌تی (برای همه درخواست‌ها، چه عادی چه تولید مجدد)
+    # ۱. اولویت اول: گپ‌جی‌پی‌تی (پولی)
     result = _try_gapgpt(audio_b64, mime_type)
-    if result:
-        return result
-    
-    logger.warning("⚠️ گپ‌جی‌پی‌تی پاسخ نداد یا قطع بود. تلاش با مدل‌های رایگان...")
+    if result: return result
 
-    # 👈 ۲. اولویت‌های بعدی: مدل‌های رایگان گوگل
-    free_models = [
-        "gemini-3.8-flash",       
-        "gemini-3.6-flash",       
-        "gemini-3.5-flash-lite"   
-    ]
-    
+    # ۲. اولویت‌های بعدی: رایگان‌ها
+    free_models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
     for model in free_models:
         result = _try_google_free_model(model, audio_b64, mime_type, duration)
+        if result: return result
+
+    raise RuntimeError("ALL_AI_FAILED")
         if result: 
             return result
 
