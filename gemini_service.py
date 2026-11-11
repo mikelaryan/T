@@ -69,22 +69,45 @@ def _detect_mime(audio_path: str) -> str:
     }.get(ext, "audio/wav")
 
 def _extract_subtitles_from_text(text: str) -> dict:
+    """استخراج فوق مقاوم JSON از پاسخ هوش مصنوعی"""
+    if not text:
+        raise ValueError("پاسخ خالی از هوش مصنوعی دریافت شد.")
+
+    # 👈 ۱. تمیزکاری اولیه: حذف مارک‌داون و کاراکترهای اضافی
+    cleaned = text.strip()
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json")[1].split("```")[0]
+    elif "```" in cleaned:
+        cleaned = cleaned.split("```")[1].split("```")[0]
+
+    cleaned = cleaned.strip()
+
+    # 👈 ۲. تلاش اول: پارس عادی با نادیده گرفتن کاراکترهای کنترلی
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(cleaned, strict=False)
     except json.JSONDecodeError:
-        cleaned = text.strip().strip("`").removeprefix("json").strip()
-        parsed = json.loads(cleaned)
-    
+        # 👈 ۳. تلاش دوم: پیدا کردن اولین { و آخرین } (حتی اگر متن اضافه وجود داشته باشه)
+        start_idx = cleaned.find('{')
+        end_idx = cleaned.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+            json_substring = cleaned[start_idx:end_idx+1]
+            try:
+                parsed = json.loads(json_substring, strict=False)
+            except json.JSONDecodeError as e:
+                logger.error(f"خطای JSON پس از استخراج: {e}")
+                logger.error(f"متن خام دریافتی: {text[:500]}")
+                raise ValueError("فرمت پاسخ هوش مصنوعی نامعتبر است.")
+        else:
+            logger.error(f"هیچ آکولادی در پاسخ پیدا نشد. متن خام: {text[:500]}")
+            raise ValueError("پاسخ هوش مصنوعی حاوی JSON نیست.")
+
+    # 👈 ۴. بررسی ساختار داخلی
     subtitles = parsed.get("subtitles")
     if not isinstance(subtitles, list) or not subtitles:
         raise ValueError("پاسخ حاوی کلید subtitles معتبر نیست.")
+        
     return parsed
-
-def _sleep_backoff(attempt: int, base: float = 2.0, max_wait: float = 10.0):
-    wait = min(base * (2 ** (attempt - 1)), max_wait)
-    total = wait + random.uniform(0, 1.0)
-    logger.info(f"⏳ {total:.1f} ثانیه صبر می‌کنم...")
-    time.sleep(total)
 
 # ===========================================
 # تابع ارتباط با GapGPT (پولی - اولویت اول)
