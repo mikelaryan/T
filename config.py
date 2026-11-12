@@ -22,5 +22,11 @@ PREMIUM_SECRET_KEY = os.getenv("PREMIUM_SECRET_KEY", "tolider_premium_secret_202
 # ===========================================
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "5080371184"))
 
+# ===========================================
+# تنظیمات Gladia AI (برای سینک دقیق صدا)
+# ===========================================
+GLADIA_API_KEY = os.getenv("GLADIA_API_KEY", "YOUR_GLADIA_API_KEY_HERE")
+
+
 # سطح لاگ
 LOG_LEVEL = "INFO"
