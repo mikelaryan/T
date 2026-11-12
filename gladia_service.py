@@ -69,7 +69,6 @@ def transcribe_with_gladia(audio_path: str) -> list[dict]:
     payload = {
         "audio_url": audio_url,
         "language_config": {"languages": ["en"]},
-        "toggle_accurate_words_timestamps": True # 👈 کلید دریافت زمان‌بندی دقیق
     }
     
     try:
