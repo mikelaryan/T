@@ -127,6 +127,10 @@ def save_telegram_video(bot, message, user_id: int, progress=None) -> str:
     else:
         raise ValueError("The message does not contain a video.")
 
+        # 👈 چک کردن محدودیت ۲۰ مگابایتی دانلود تلگرام
+    if file_size > 20 * 1024 * 1024:
+        raise ValueError("TELEGRAM_FILE_TOO_LARGE")
+
     if progress:
         size_mb = file_size / (1024 * 1024) if file_size else 0
         progress.update(
