@@ -370,6 +370,13 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         markup.add(retry_btn)
         
         err_str = str(e)
+
+        if "TELEGRAM_FILE_TOO_LARGE" in err_str or "file is too big" in err_str:
+            friendly_error = (
+                "⚠️ <b>حجم فایل شما بیش از ۲۰ مگابایت است.</b>\n\n"
+                "تلگرام به ربات‌ها اجازه دانلود فایل‌های بزرگتر از ۲۰ مگابایت را نمی‌دهد. "
+                "لطفاً ویدیوی کوچک‌تری بفرستید یا از لینک اینستاگرام استفاده کنید."
+            )
         
         # تشخیص خطای قطعی همزمان گپ‌جی‌پی‌تی و مدل‌های رایگان
         if err_str == "ALL_AI_FAILED":
