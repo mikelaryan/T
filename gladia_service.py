@@ -156,5 +156,5 @@ def _extract_words(result_data: dict) -> list[dict]:
             
     if not words:
         logger.warning("[Gladia] هیچ کلمه‌ای در پاسخ پیدا نشد.")
-        
+        logger.info(f"[Gladia] Sample extracted words: {words[:5]}") # چاپ ۵ کلمه اول برای تست
     return words
