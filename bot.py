@@ -11,6 +11,7 @@ import hashlib
 import datetime
 from zoneinfo import ZoneInfo
 import gladia_service
+import translation_service
 
 import telebot
 from telebot import types
