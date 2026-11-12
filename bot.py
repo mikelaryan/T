@@ -10,6 +10,7 @@ import threading
 import hashlib
 import datetime
 from zoneinfo import ZoneInfo
+import gladia_service
 
 import telebot
 from telebot import types
