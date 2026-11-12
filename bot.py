@@ -292,6 +292,15 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
     try:
         video_path, audio_path = process_incoming(bot, message, is_link, progress=reporter)
 
+                # 👈 تست موقت گلادیا (دقیقا اینجا قرار می‌گیره)
+        logger.info("--- شروع تست Gladia ---")
+        try:
+            gladia_words = gladia_service.transcribe_with_gladia(audio_path)
+            logger.info(f"✅ تعداد کلمات پیدا شده با Gladia: {len(gladia_words)}")
+        except Exception as e:
+            logger.error(f"❌ خطای Gladia در تست: {e}")
+        logger.info("--- پایان تست Gladia ---")
+
         reporter.update(stage=1, sub_text="", pct=50, force=True)
         result = transcribe_audio(audio_path, is_regen=is_regen)
         
