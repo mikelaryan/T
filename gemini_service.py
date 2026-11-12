@@ -1,7 +1,6 @@
 """
-ارتباط با هوش مصنوعی — اولویت مطلق با GapGPT (پولی)، پشتیبان با مدل‌های رایگان
+ارتباط با هوش مصنوعی — با پرامپت مخصوص سینک و مقاوم‌سازی کامل JSON
 """
-
 import os
 import json
 import base64
@@ -9,13 +8,12 @@ import logging
 import time
 import random
 import requests
-
 import config
 
 logger = logging.getLogger(__name__)
 
 # ===========================================
-# پرامپت
+# پرامپت جدید (مخصوص سینک دقیق و ریلزهای تند)
 # ===========================================
 SUBTITLE_PROMPT = """
 تو یک متخصص مترجم و زمان‌بندِ دقیق زیرنویس هستی. 
@@ -30,7 +28,7 @@ SUBTITLE_PROMPT = """
 - سرعت و زمان‌بندی: اگر گوینده سریع صحبت می‌کند (مثل ریلزهای اینستاگرام)، زیرنویس نیز باید با همان سرعت بالا عوض شود. هیچ حداقل زمانی برای نمایش خطوط وجود ندارد (حتی اگر ۰.۵ ثانیه باشد).
 - عدم تداخل: زمان شروع خط جدید (start_time) هرگز نباید از زمان پایان خط قبلی (end_time) کمتر باشد.
 - عدم کشیدگی: هیچ خطی نباید بیشتر از ۳ ثانیه روی صفحه بماند.
-- طول خطوط: هر خط زیرنویس باید حداکثر ۶ کلمه باشد (برای خوانایی در اینستاگرام).
+- طول خطوط: هر خط زیرنویس باید حداکثر ۳۰ کاراکتر و حداکثر ۴ کلمه باشد (برای خوانایی در اینستاگرام).
 - ترجمه: اصطلاحات تخصصی و اسامی خاص را به همان انگلیسی بنویس.
 
 فرمت خروجی: فقط و فقط یک آرایه JSON معتبر، بدون هیچ متن اضافه، بدون ```json:
@@ -68,17 +66,23 @@ def _detect_mime(audio_path: str) -> str:
         ".webm": "audio/webm",
     }.get(ext, "audio/wav")
 
+# ===========================================
+# تابع استخراج فوق مقاوم JSON (رفع مشکل Enter و فرمت‌های بد)
+# ===========================================
 def _extract_subtitles_from_text(text: str) -> dict:
-    """استخراج فوق مقاوم JSON"""
-    if not text: raise ValueError("پاسخ خالی دریافت شد.")
+    if not text: 
+        raise ValueError("پاسخ خالی دریافت شد.")
     
     cleaned = text.strip()
-    if "```json" in cleaned: cleaned = cleaned.split("```json")[1].split("```")[0]
-    elif "```" in cleaned: cleaned = cleaned.split("```")[1].split("```")[0]
+    if "```json" in cleaned: 
+        cleaned = cleaned.split("```json")[1].split("```")[0]
+    elif "```" in cleaned: 
+        cleaned = cleaned.split("```")[1].split("```")[0]
     
     # 👈 پاک کردن تمام Enter ها برای جلوگیری از خرابی JSON
     cleaned = cleaned.replace("\n", "").replace("\r", "")
 
+    # پیدا کردن دقیق آکولاد باز و بسته
     start_idx = cleaned.find('{')
     end_idx = cleaned.rfind('}')
     if start_idx != -1 and end_idx != -1:
@@ -95,13 +99,16 @@ def _extract_subtitles_from_text(text: str) -> dict:
         raise ValueError("کلید subtitles معتبر نیست.")
     return parsed
 
-# 👈 این تابعی بود که جا افتاده بود
+# 👈 تابعی که جا افتاده بود
 def _sleep_backoff(attempt: int, base: float = 2.0, max_wait: float = 10.0):
     wait = min(base * (2 ** (attempt - 1)), max_wait)
     total = wait + random.uniform(0, 1.0)
     logger.info(f"⏳ {total:.1f} ثانیه صبر می‌کنم...")
     time.sleep(total)
 
+# ===========================================
+# اولویت اول: GapGPT (پولی)
+# ===========================================
 def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
     if not getattr(config, "GAPGPT_API_KEY", None) or "YOUR_GAPGPT" in config.GAPGPT_API_KEY:
         return None
@@ -133,6 +140,9 @@ def _try_gapgpt(audio_b64: str, mime_type: str) -> dict | None:
         logger.error(f"خطای GapGPT: {e}")
     return None
 
+# ===========================================
+# اولویت دوم: مدل‌های رایگان گوگل
+# ===========================================
 def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, duration: float = 0) -> dict | None:
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
@@ -159,9 +169,13 @@ def _try_google_free_model(model_name: str, audio_b64: str, mime_type: str, dura
             logger.warning(f"⚠️ {model_name} → HTTP {response.status_code}")
         except requests.RequestException as e:
             logger.warning(f"خطای شبکه ({model_name}): {e}")
-        if attempt < 2: _sleep_backoff(attempt)
+        if attempt < 2: 
+            _sleep_backoff(attempt)
     return None
 
+# ===========================================
+# تابع اصلی
+# ===========================================
 def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 0) -> dict:
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"فایل صوتی پیدا نشد: {audio_path}")
@@ -171,17 +185,22 @@ def transcribe_audio(audio_path: str, is_regen: bool = False, duration: float = 
 
     # ۱. اولویت اول: گپ‌جی‌پی‌تی (پولی)
     result = _try_gapgpt(audio_b64, mime_type)
-    if result: return result
+    if result: 
+        return result
+
+    logger.warning("⚠️ گپ‌جی‌پی‌تی پاسخ نداد. تلاش با مدل‌های رایگان...")
 
     # ۲. اولویت‌های بعدی: رایگان‌ها
-    free_models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    free_models = [
+        "gemini-3.8-flash",       
+        "gemini-3.6-flash",       
+        "gemini-3.5-flash-lite"   
+    ]
+    
     for model in free_models:
         result = _try_google_free_model(model, audio_b64, mime_type, duration)
-        if result: return result
-
-    raise RuntimeError("ALL_AI_FAILED")
         if result: 
             return result
 
-    # 👈 ۳. اگر همه خراب بودند، خطای اختصاصی بده تا ربات پیام مناسب بفرسته
+    # ۳. خطای نهایی
     raise RuntimeError("ALL_AI_FAILED")
