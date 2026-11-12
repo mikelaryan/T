@@ -285,28 +285,23 @@ def handle_input(message: types.Message):
 # پردازش اصلی
 # ===========================================
 def _process(message: types.Message, is_link: bool, is_regen: bool = False):
-    # 👈 پارامتر is_regen برای هماهنگی با صف نگه داشته شده، ولی دیگه استفاده نمیشه
     logger.info(f"[LOG] Starting main processing for user {message.from_user.id}.")
     reporter = ProgressReporter(bot, message.chat.id)
 
     try:
         video_path, audio_path = process_incoming(bot, message, is_link, progress=reporter)
 
-                # 👈 تست موقت گلادیا (دقیقا اینجا قرار می‌گیره)
-        logger.info("--- شروع تست Gladia ---")
-        try:
-            gladia_words = gladia_service.transcribe_with_gladia(audio_path)
-            logger.info(f"✅ تعداد کلمات پیدا شده با Gladia: {len(gladia_words)}")
-        except Exception as e:
-            logger.error(f"❌ خطای Gladia در تست: {e}")
-        logger.info("--- پایان تست Gladia ---")
+        # 👈 مرحله ۱: دریافت زمان‌بندی دقیق کلمات از Gladia
+        reporter.update(stage=1, sub_text="در حال دریافت زمان‌بندی دقیق صدا...", pct=30, force=True)
+        words = gladia_service.transcribe_with_gladia(audio_path)
+        logger.info(f"[LOG] Gladia returned {len(words)} words.")
 
-        reporter.update(stage=1, sub_text="", pct=50, force=True)
-        result = transcribe_audio(audio_path, is_regen=is_regen)
+        # 👈 مرحله ۲: گروه‌بندی کلمات و ترجمه متنی
+        reporter.update(stage=1, sub_text="در حال ترجمه و همگام‌سازی...", pct=70, force=True)
+        result = translation_service.build_final_subtitles(words)
         
-        # گرفتن مدل و منبع
-        used_model = result.get("used_model", "نامشخص")
-        api_source = result.get("api_source", "نامشخص")
+        used_model = result.get("used_model", "Gladia + AI")
+        api_source = result.get("api_source", "Gladia + API")
 
         srt_path = str(WORK_DIR / f"subtitles_{message.from_user.id}.srt")
         save_srt(result["subtitles"], srt_path)
@@ -381,6 +376,7 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
         
         err_str = str(e)
 
+        # 👈 مدیریت خطای حجم فایل تلگرام
         if "TELEGRAM_FILE_TOO_LARGE" in err_str or "file is too big" in err_str:
             friendly_error = (
                 "⚠️ <b>حجم فایل شما بیش از ۲۰ مگابایت است.</b>\n\n"
@@ -388,12 +384,19 @@ def _process(message: types.Message, is_link: bool, is_regen: bool = False):
                 "لطفاً ویدیوی کوچک‌تری بفرستید یا از لینک اینستاگرام استفاده کنید."
             )
         
-        # تشخیص خطای قطعی همزمان گپ‌جی‌پی‌تی و مدل‌های رایگان
-        if err_str == "ALL_AI_FAILED":
+        # 👈 مدیریت خطاهای Gladia
+        elif "GLADIA" in err_str:
+            friendly_error = (
+                "⚠️ <b>اختلال در سیستم تشخیص گفتار (Gladia)</b>\n\n"
+                "لطفاً چند دقیقه دیگر دکمه «تلاش مجدد» را بزنید یا با پشتیبانی در ارتباط باشید."
+            )
+
+        # 👈 مدیریت خطای قطعی ترجمه (اگر هر دو سیستم پولی و رایگان قطع بودند)
+        elif err_str == "ALL_AI_FAILED":
             friendly_error = (
                 "⚠️ <b>اختلال موقت در سرورهای هوش مصنوعی</b>\n\n"
                 "متأسفانه در حال حاضر هم سرورهای پولی و هم رایگان پاسخگو نیستند.\n"
-                "لطفاً چند دقیقه دیگر دکمه «تلاش مجدد» را بزنید یا در صورت تکرار با پشتیبانی در ارتباط باشید."
+                "لطفاً چند دقیقه دیگر دکمه «تلاش مجدد» را بزنید."
             )
         elif "503" in err_str or "UNAVAILABLE" in err_str:
             friendly_error = "⚠️ <b>سرورهای هوش مصنوعی در حال حاضر با ترافیک بالا مواجه هستند.</b>\n\nلطفاً چند لحظه صبر کنید و دکمه تلاش مجدد را بزنید."
