@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 # ۱. گروه‌بندی کلمات (Chunking)
 # ===========================================
 def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_threshold: float = 0.6) -> list[dict]:
-    """
-    کلمات را بر اساس مکث‌های گوینده یا رسیدن به حداکثر کلمات، به گروه‌های زیرنویس تبدیل می‌کند.
-    """
     chunks = []
     current_chunk = []
     chunk_start = 0.0
@@ -26,24 +23,20 @@ def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_thresho
         if not word:
             continue
 
-        # اگر اولین کلمه گروه است
         if not current_chunk:
             chunk_start = w["start"]
 
         current_chunk.append(word)
         chunk_end = w["end"]
 
-        # بررسی شرط بستن گروه
         is_max_words = len(current_chunk) >= max_words
         is_long_pause = False
         
-        # اگر کلمه بعدی وجود داشته باشد، فاصله زمانی را چک می‌کنیم
         if i + 1 < len(words):
             next_word_start = words[i + 1]["start"]
             if next_word_start - chunk_end > pause_threshold:
                 is_long_pause = True
 
-        # اگر کلمه به علامت نگارشی ختم شده بود (مثل نقطه یا ویرگول)
         is_punctuation = word.endswith(('.', ',', '?', '!'))
 
         if is_max_words or is_long_pause or is_punctuation or (i == len(words) - 1):
@@ -57,86 +50,126 @@ def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_thresho
     return chunks
 
 # ===========================================
-# ۲. ترجمه گروه‌ها با هوش مصنوعی
+# ۲. ترجمه گروه‌ها (به صورت بسته‌های ۱۰ خطی)
 # ===========================================
 def translate_chunks(chunks: list[dict]) -> list[dict]:
-    """متن انگلیسی گروه‌ها را به فارسی ترجمه می‌کند."""
     if not chunks:
         return []
 
-    # استخراج فقط متن انگلیسی برای فرستادن به هوش مصنوعی
     english_texts = [c["text_en"] for c in chunks]
+    translated_texts = []
+    batch_size = 10 # 👈 ترجمه ۱۰ خط در هر بار برای جلوگیری از ادغام شدن
 
+    for i in range(0, len(english_texts), batch_size):
+        batch_en = english_texts[i:i+batch_size]
+        logger.info(f"[Translation] در حال ترجمه بسته {i//batch_size + 1} (شامل {len(batch_en)} خط)...")
+        
+        batch_fa = _translate_single_batch(batch_en)
+        
+        # اگر ترجمه بسته موفق بود و تعدادش دقیقا برابر بود
+        if batch_fa and len(batch_fa) == len(batch_en):
+            translated_texts.extend(batch_fa)
+        else:
+            logger.warning(f"⚠️ بسته {i//batch_size + 1} ناموفق بود یا تعداد خطوط همخوانی نداشت. استفاده از انگلیسی برای این بسته.")
+            translated_texts.extend(batch_en) # استفاده از انگلیسی به عنوان جایگزین اضطراری
+
+    for i in range(len(chunks)):
+        chunks[i]["text_fa"] = translated_texts[i]
+
+    return chunks
+
+def _translate_single_batch(english_texts: list[str]) -> list:
+    """ترجمه یک بسته کوچک از جملات"""
+    expected_len = len(english_texts)
     prompt = f"""
-تو یک مترجم حرفه‌ای هستی. من به تو یک آرایه JSON از جملات انگلیسی می‌دهم.
-وظیفه تو این است که هر جمله را به فارسی روان، محاوره‌ای و کوتاه (مناسب زیرنویس) ترجمه کنی.
-تو باید دقیقاً به همان تعداد جمله‌ای که می‌گیری، ترجمه برگردانی. ترتیب جملات را تغییر نده.
+تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از {expected_len} جمله انگلیسی می‌دهم.
+وظیفه تو ترجمه هر جمله به فارسی روان، محاوره‌ای و کوتاه (مناسب زیرنویس) است.
 
-آرایه ورودی:
+⚠️ قوانین بسیار مهم:
+۱. تو باید دقیقاً {expected_len} جمله ترجمه کنی. 
+۲. حق ادغام کردن یا حذف کردن جملات را نداری.
+۳. لیست خروجی باید دقیقاً {expected_len} عضو داشته باشد.
+
+لیست جملات انگلیسی:
 {json.dumps(english_texts, ensure_ascii=False)}
 
-خروجی را فقط به صورت یک آرایه JSON از رشته‌های فارسی برگردان (مثل ["ترجمه ۱", "ترجمه ۲"]). بدون هیچ متن اضافه.
+خروجی را دقیقاً به این فرمت JSON برگردان (بدون هیچ متن اضافه‌ای):
+{{
+  "translations": [
+    "ترجمه جمله ۱",
+    "ترجمه جمله ۲"
+  ]
+}}
 """.strip()
 
-    translated_texts = []
-
-    # تلاش با GapGPT (پولی و باکیفیت)
+    # تلاش با GapGPT (پولی)
     if getattr(config, "GAPGPT_API_KEY", None) and "YOUR_GAPGPT" not in config.GAPGPT_API_KEY:
         try:
-            logger.info("💰 ترجمه متنی با GapGPT...")
             headers = {"Authorization": f"Bearer {config.GAPGPT_API_KEY}", "Content-Type": "application/json"}
             payload = {
                 "model": "gemini-3.8-flash",
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": {"type": "json_object"}
             }
-            response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=60)
+            response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=120)
             if response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"]
-                # استخراج آرایه از JSON (حتی اگر داخل آبجکت پیچیده باشد)
-                cleaned = content.replace("\n", "").replace("\r", "")
-                start, end = cleaned.find('['), cleaned.rfind(']')
-                if start != -1 and end != -1:
-                    translated_texts = json.loads(cleaned[start:end+1], strict=False)
+                res = _parse_translation_response(content)
+                if len(res) == expected_len:
+                    return res
+            else:
+                # 👈 حالا دقیقاً میفهمیم گپ‌جی‌پی‌تی چرا ارور داده
+                logger.error(f"❌ خطای GapGPT: HTTP {response.status_code} - {response.text[:200]}")
         except Exception as e:
-            logger.error(f"خطای ترجمه GapGPT: {e}")
+            logger.error(f"❌ خطای شبکه GapGPT: {e}")
 
-    # اگر گپ‌جی‌پی‌تی جواب نداد، تلاش با گوگل رایگان
-    if not translated_texts:
+    # تلاش با گوگل رایگان
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+        headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
+        }
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code == 200:
+            text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            res = _parse_translation_response(text)
+            if len(res) == expected_len:
+                return res
+            else:
+                logger.warning(f"⚠️ گوگل {len(res)} خط برگرداند، ولی {expected_len} خط انتظار داشتیم.")
+    except Exception as e:
+        logger.error(f"❌ خطای شبکه گوگل: {e}")
+
+    return []
+
+def _parse_translation_response(content: str) -> list:
+    """استخراج فوق مقاوم آرایه ترجمه از پاسخ هوش مصنوعی"""
+    cleaned = content.replace("\n", "").replace("\r", "")
+    
+    try:
+        parsed = json.loads(cleaned, strict=False)
+        if isinstance(parsed, dict) and "translations" in parsed:
+            return parsed["translations"]
+        elif isinstance(parsed, list):
+            return parsed
+    except:
+        pass
+
+    start, end = cleaned.find('['), cleaned.rfind(']')
+    if start != -1 and end != -1:
         try:
-            logger.info("🌐 ترجمه متنی با گوگل (رایگان)...")
-            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-            headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
-            }
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
-            if response.status_code == 200:
-                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-                cleaned = text.replace("\n", "").replace("\r", "")
-                start, end = cleaned.find('['), cleaned.rfind(']')
-                if start != -1 and end != -1:
-                    translated_texts = json.loads(cleaned[start:end+1], strict=False)
-        except Exception as e:
-            logger.error(f"خطای ترجمه گوگل: {e}")
-
-    # اگر هیچکدام جواب نداد، متن انگلیسی را به عنوان جایگزین می‌گذاریم تا کاربر دست خالی نماند
-    if not translated_texts or len(translated_texts) != len(chunks):
-        logger.warning("⚠️ ترجمه ناموفق بود یا تعداد خطوط همخوانی نداشت. استفاده از متن انگلیسی.")
-        return chunks
-
-    # ترکیب ترجمه‌ها با زمان‌بندی اصلی
-    for i in range(len(chunks)):
-        chunks[i]["text_fa"] = translated_texts[i]
-
-    return chunks
+            return json.loads(cleaned[start:end+1], strict=False)
+        except:
+            pass
+            
+    return []
 
 # ===========================================
 # ۳. تبدیل نهایی به فرمت زیرنویس
 # ===========================================
 def _format_time(seconds: float) -> str:
-    """تبدیل ثانیه به فرمت SRT (00:00:01,000)"""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
@@ -144,20 +177,14 @@ def _format_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 def build_final_subtitles(words: list[dict]) -> dict:
-    """
-    تابع اصلی که کلمات Gladia را می‌گیرد، گروه‌بندی می‌کند، ترجمه می‌کند و خروجی JSON نهایی را می‌دهد.
-    """
     if not words:
         raise ValueError("لیست کلمات خالی است.")
 
-    # ۱. گروه‌بندی
     chunks = group_words_into_chunks(words)
     logger.info(f"[Pipeline] {len(words)} کلمه به {len(chunks)} خط زیرنویس تبدیل شد.")
 
-    # ۲. ترجمه
     chunks = translate_chunks(chunks)
 
-    # ۳. ساخت فرمت نهایی
     final_subtitles = []
     for i, c in enumerate(chunks):
         final_subtitles.append({
@@ -169,6 +196,6 @@ def build_final_subtitles(words: list[dict]) -> dict:
 
     return {
         "subtitles": final_subtitles,
-        "used_model": "Gladia + Gemini",
-        "api_source": "Gladia (Sync) + AI (Translation)"
+        "used_model": "Gladia + AI (Batched)",
+        "api_source": "Gladia (Sync) + Translation"
     }
