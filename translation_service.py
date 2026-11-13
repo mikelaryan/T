@@ -1,5 +1,5 @@
 """
-سرویس ترجمه و گروه‌بندی کلمات (با تشخیص هوشمند ادغام خطوط)
+سرویس ترجمه و گروه‌بندی کلمات (با تشخیص هوشمند ادغام خطوط و حفظ سینک ۱۰۰٪)
 """
 import json
 import time
@@ -70,7 +70,6 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
             final_chunks.extend(batch_fa)
         else:
             logger.warning(f"⚠️ بسته {i//batch_size + 1} ناموفق بود. استفاده از انگلیسی برای این بسته.")
-            # اگر ترجمه کل بسته شکست خورد، عیناً همون خطوط انگلیسی رو با همون زمان‌ها برمی‌گردونیم
             for c in batch:
                 final_chunks.append({
                     "text_fa": c["text_en"],
@@ -83,17 +82,17 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
 def _translate_single_batch(batch_chunks: list[dict]) -> list:
     expected_len = len(batch_chunks)
     
-    # 👈 ساخت لیست ورودی برای هوش مصنوعی (متن + شماره خط)
     input_data = [{"id": c["id"], "text": c["text_en"]} for c in batch_chunks]
     
     prompt = f"""
-تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از جملات انگلیسی (همراه با شماره خط id) می‌دهم.
-وظیفه تو ترجمه روان و محاوره‌ای این جملات به فارسی است.
+تو یک مترجم حرفه‌ای و متخصص زیرنویس‌گذاری برای اینستاگرام هستی. من به تو یک لیست از جملات انگلیسی (همراه با شماره خط id) می‌دهم.
+وظیفه تو ترجمه روان، محاوره‌ای و **بسیار کوتاه** این جملات به فارسی است.
 
-⚠️ قوانین بسیار مهم:
-۱. اگر دیدی دو یا چند جمله انگلیسی از نظر معنایی به هم وصل هستند و در فارسی بهتر است با هم بیایند، می‌توانی آن‌ها را با هم ترکیب کنی.
-۲. اگر جمله‌ای را ترکیب کردی، باید در خروجی آرایه‌ای از id های آن جملات را قرار دهی.
-۳. زمان‌بندی کلمات به عهده سیستم است، تو فقط باید id ها را درست بدهی.
+⚠️ قوانین طلایی (تخطی ممنوع):
+۱. **محدودیت ادغام:** تو حق داری حداکثر ۲ جمله انگلیسی (۲ خط) را با هم ادغام کنی. هرگز حق نداری ۳ جمله یا بیشتر را با هم ترکیب کنی.
+۲. **محدودیت طول:** طول هر خط ترجمه فارسی نباید بیشتر از ۳۰ کاراکتر باشد (تا در یک خط صفحه جا شود).
+۳. اگر ترجمه یک جمله طولانی شد، باید آن را به دو بخش کوتاه‌تر بشکنی و برای هر بخش، id های مربوطه را دقیقاً مشخص کنی.
+۴. زمان‌بندی کلمات به عهده سیستم است، تو فقط باید متن فارسی و id ها را درست بدهی.
 
 لیست جملات انگلیسی:
 {json.dumps(input_data, ensure_ascii=False)}
@@ -101,8 +100,9 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
 خروجی را دقیقاً به این فرمت JSON برگردان:
 {{
   "translations": [
-    {{"text": "ترجمه روان جمله اول", "ids": [1, 2]}},
-    {{"text": "ترجمه جمله سوم", "ids": [3]}}
+    {{"text": "ترجمه روان", "ids": [1, 2]}},
+    {{"text": "ترجمه کوتاه", "ids": [3]}},
+    {{"text": "ترجمه کوتاه", "ids": [4]}}
   ]
 }}
 """.strip()
@@ -169,7 +169,6 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
 
 def _calculate_final_times(translations: list, original_chunks: list) -> list:
     """
-    این تابع نابغه‌ی کد ماست!
     زمان شروع را از اولین id و زمان پایان را از آخرین id برمی‌دارد.
     """
     chunk_dict = {c["id"]: c for c in original_chunks}
@@ -183,7 +182,6 @@ def _calculate_final_times(translations: list, original_chunks: list) -> list:
             continue
 
         try:
-            # پیدا کردن زمان شروع و پایان با توجه به id ها
             starts = [chunk_dict[i]["start"] for i in ids if i in chunk_dict]
             ends = [chunk_dict[i]["end"] for i in ids if i in chunk_dict]
             
@@ -236,7 +234,6 @@ def build_final_subtitles(words: list[dict]) -> dict:
     chunks = group_words_into_chunks(words)
     logger.info(f"[Pipeline] {len(words)} کلمه به {len(chunks)} خط زیرنویس تبدیل شد.")
 
-    # گرفتن خطوط ترجمه شده و محاسبه زمان‌ها
     translated_chunks = translate_chunks(chunks)
 
     final_subtitles = []
