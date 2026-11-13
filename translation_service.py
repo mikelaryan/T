@@ -1,5 +1,5 @@
 """
-سرویس ترجمه و گروه‌بندی کلمات (با تشخیص هوشمند ادغام خطوط و حفظ سینک ۱۰۰٪)
+سرویس ترجمه و گروه‌بندی کلمات (مقاوم در برابر شلوغی گوگل)
 """
 import json
 import time
@@ -41,7 +41,7 @@ def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_thresho
 
         if is_max_words or is_long_pause or is_punctuation or (i == len(words) - 1):
             chunks.append({
-                "id": len(chunks) + 1, # 👈 اضافه کردن شماره خط
+                "id": len(chunks) + 1,
                 "text_en": " ".join(current_chunk),
                 "start": chunk_start,
                 "end": chunk_end
@@ -80,8 +80,6 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
     return final_chunks
 
 def _translate_single_batch(batch_chunks: list[dict]) -> list:
-    expected_len = len(batch_chunks)
-    
     input_data = [{"id": c["id"], "text": c["text_en"]} for c in batch_chunks]
     
     prompt = f"""
@@ -90,9 +88,8 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
 
 ⚠️ قوانین طلایی (تخطی ممنوع):
 ۱. **محدودیت ادغام:** تو حق داری حداکثر ۲ جمله انگلیسی (۲ خط) را با هم ادغام کنی. هرگز حق نداری ۳ جمله یا بیشتر را با هم ترکیب کنی.
-۲. **محدودیت طول:** طول هر خط ترجمه فارسی نباید بیشتر از ۳۰ کاراکتر باشد (تا در یک خط صفحه جا شود).
-۳. اگر ترجمه یک جمله طولانی شد، باید آن را به دو بخش کوتاه‌تر بشکنی و برای هر بخش، id های مربوطه را دقیقاً مشخص کنی.
-۴. زمان‌بندی کلمات به عهده سیستم است، تو فقط باید متن فارسی و id ها را درست بدهی.
+۲. **محدودیت طول:** طول هر خط ترجمه فارسی نباید بیشتر از ۴۰ کاراکتر باشد.
+۳. زمان‌بندی کلمات به عهده سیستم است، تو فقط باید متن فارسی و id ها را درست بدهی.
 
 لیست جملات انگلیسی:
 {json.dumps(input_data, ensure_ascii=False)}
@@ -101,13 +98,12 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
 {{
   "translations": [
     {{"text": "ترجمه روان", "ids": [1, 2]}},
-    {{"text": "ترجمه کوتاه", "ids": [3]}},
-    {{"text": "ترجمه کوتاه", "ids": [4]}}
+    {{"text": "ترجمه کوتاه", "ids": [3]}}
   ]
 }}
 """.strip()
 
-    # --- تلاش با GapGPT ---
+    # --- ۱. تلاش با GapGPT ---
     if getattr(config, "GAPGPT_API_KEY", None) and "YOUR_GAPGPT" not in config.GAPGPT_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {config.GAPGPT_API_KEY}", "Content-Type": "application/json"}
@@ -119,28 +115,50 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
             response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=60)
             
             if response.status_code == 403:
-                logger.warning("⚠️ اعتبار GapGPT تمام شده یا کلید مسدود است. سوییچ به گوگل رایگان.")
+                logger.warning("⚠️ اعتبار GapGPT تمام شده. سوییچ به گوگل رایگان.")
             elif response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"]
                 res = _parse_translation_response(content)
                 if res:
                     return _calculate_final_times(res, batch_chunks)
-            else:
-                logger.error(f"❌ خطای GapGPT: HTTP {response.status_code}")
         except Exception as e:
             logger.error(f"❌ خطای شبکه GapGPT: {e}")
 
-    # --- تلاش با گوگل رایگان ---
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+    # --- ۲. تلاش با گوگل رایگان (۳ بار تلاش با صبر بیشتر) ---
+    logger.info(f"[Translation] ارسال به گوگل (3.5-lite) برای {len(batch_chunks)} خط...")
+    google_result = _try_google_translation(
+        model="gemini-3.5-flash-lite", 
+        prompt=prompt, 
+        batch_chunks=batch_chunks,
+        max_retries=3,
+        sleep_time=5
+    )
+    if google_result:
+        return google_result
+
+    # --- ۳. پشتیبان دوم: مدل 3.6 ---
+    logger.warning(f"⚠️ مدل 3.5-lite شکست خورد. تلاش با پشتیبان (3.6-flash)...")
+    google_result = _try_google_translation(
+        model="gemini-3.6-flash", 
+        prompt=prompt, 
+        batch_chunks=batch_chunks,
+        max_retries=2,
+        sleep_time=3
+    )
+    if google_result:
+        return google_result
+
+    return []
+
+def _try_google_translation(model: str, prompt: str, batch_chunks: list, max_retries: int, sleep_time: int) -> list:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
     }
 
-    logger.info(f"[Translation] English text sent to 3.5-lite: {input_data}")
-
-    for attempt in range(2):
+    for attempt in range(max_retries):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=60)
             
@@ -150,27 +168,24 @@ def _translate_single_batch(batch_chunks: list[dict]) -> list:
                 if res:
                     return _calculate_final_times(res, batch_chunks)
                 else:
-                    logger.warning(f"⚠️ فرمت خروجی گوگل نامعتبر بود: {text[:300]}")
-                    break
-                    
+                    logger.warning(f"⚠️ فرمت خروجی {model} نامعتبر بود.")
+                    break # خطای فرمت با تلاش مجدد حل نمیشه
+            
             elif response.status_code == 503:
-                logger.warning(f"⚠️ گوگل 503 داد (تلاش {attempt+1}/2). ۲ ثانیه صبر و تلاش مجدد...")
-                time.sleep(2)
+                logger.warning(f"⚠️ {model} شلوغ است (503). تلاش {attempt+1}/{max_retries}. {sleep_time} ثانیه صبر...")
+                time.sleep(sleep_time)
                 continue
             else:
-                logger.error(f"❌ خطای HTTP گوگل: {response.status_code} - {response.text[:200]}")
+                logger.error(f"❌ خطای HTTP {model}: {response.status_code}")
                 break
                 
         except Exception as e:
-            logger.error(f"❌ خطای شبکه گوگل (تلاش {attempt+1}/2): {e}")
-            time.sleep(2)
+            logger.error(f"❌ خطای شبکه {model} (تلاش {attempt+1}/{max_retries}): {e}")
+            time.sleep(sleep_time)
 
     return []
 
 def _calculate_final_times(translations: list, original_chunks: list) -> list:
-    """
-    زمان شروع را از اولین id و زمان پایان را از آخرین id برمی‌دارد.
-    """
     chunk_dict = {c["id"]: c for c in original_chunks}
     final_result = []
 
@@ -206,15 +221,6 @@ def _parse_translation_response(content: str) -> list:
             return parsed
     except:
         pass
-
-    start, end = cleaned.find('{'), cleaned.rfind('}')
-    if start != -1 and end != -1:
-        try:
-            parsed = json.loads(cleaned[start:end+1], strict=False)
-            if isinstance(parsed, dict) and "translations" in parsed:
-                return parsed["translations"]
-        except:
-            pass
     return []
 
 # ===========================================
@@ -232,8 +238,6 @@ def build_final_subtitles(words: list[dict]) -> dict:
         raise ValueError("لیست کلمات خالی است.")
 
     chunks = group_words_into_chunks(words)
-    logger.info(f"[Pipeline] {len(words)} کلمه به {len(chunks)} خط زیرنویس تبدیل شد.")
-
     translated_chunks = translate_chunks(chunks)
 
     final_subtitles = []
@@ -248,5 +252,5 @@ def build_final_subtitles(words: list[dict]) -> dict:
     return {
         "subtitles": final_subtitles,
         "used_model": "Gladia + AI (Smart Merge)",
-        "api_source": "Gladia (Sync) + Google 3.5-lite"
+        "api_source": "Gladia (Sync) + Google (Fallback)"
     }
