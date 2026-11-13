@@ -50,7 +50,7 @@ def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_thresho
     return chunks
 
 # ===========================================
-# ۲. ترجمه گروه‌ها (به صورت بسته‌های ۱۰ خطی)
+# ۲. ترجمه گروه‌ها
 # ===========================================
 def translate_chunks(chunks: list[dict]) -> list[dict]:
     if not chunks:
@@ -58,7 +58,7 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
 
     english_texts = [c["text_en"] for c in chunks]
     translated_texts = []
-    batch_size = 10 # 👈 ترجمه ۱۰ خط در هر بار برای جلوگیری از ادغام شدن
+    batch_size = 10
 
     for i in range(0, len(english_texts), batch_size):
         batch_en = english_texts[i:i+batch_size]
@@ -66,12 +66,11 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
         
         batch_fa = _translate_single_batch(batch_en)
         
-        # اگر ترجمه بسته موفق بود و تعدادش دقیقا برابر بود
         if batch_fa and len(batch_fa) == len(batch_en):
             translated_texts.extend(batch_fa)
         else:
-            logger.warning(f"⚠️ بسته {i//batch_size + 1} ناموفق بود یا تعداد خطوط همخوانی نداشت. استفاده از انگلیسی برای این بسته.")
-            translated_texts.extend(batch_en) # استفاده از انگلیسی به عنوان جایگزین اضطراری
+            logger.warning(f"⚠️ بسته {i//batch_size + 1} ناموفق بود. استفاده از انگلیسی برای این بسته.")
+            translated_texts.extend(batch_en)
 
     for i in range(len(chunks)):
         chunks[i]["text_fa"] = translated_texts[i]
@@ -79,8 +78,8 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
     return chunks
 
 def _translate_single_batch(english_texts: list[str]) -> list:
-    """ترجمه یک بسته کوچک از جملات"""
     expected_len = len(english_texts)
+    
     prompt = f"""
 تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از {expected_len} جمله انگلیسی می‌دهم.
 وظیفه تو ترجمه هر جمله به فارسی روان، محاوره‌ای و کوتاه (مناسب زیرنویس) است.
@@ -93,7 +92,7 @@ def _translate_single_batch(english_texts: list[str]) -> list:
 لیست جملات انگلیسی:
 {json.dumps(english_texts, ensure_ascii=False)}
 
-خروجی را دقیقاً به این فرمت JSON برگردان (بدون هیچ متن اضافه‌ای):
+خروجی را دقیقاً به این فرمت JSON برگردان:
 {{
   "translations": [
     "ترجمه جمله ۱",
@@ -111,19 +110,24 @@ def _translate_single_batch(english_texts: list[str]) -> list:
                 "messages": [{"role": "user", "content": prompt}],
                 "response_format": {"type": "json_object"}
             }
-            response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=120)
-            if response.status_code == 200:
+            response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=60)
+            
+            # اگر اعتبار تمام شده باشد (403) یا ارور دیگری
+            if response.status_code == 403:
+                logger.warning("⚠️ اعتبار GapGPT تمام شده یا کلید مسدود است. سوییچ به گوگل رایگان.")
+            elif response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"]
                 res = _parse_translation_response(content)
                 if len(res) == expected_len:
                     return res
+                else:
+                    logger.warning(f"⚠️ GapGPT تعداد نامعتبری خط ({len(res)} از {expected_len}) برگرداند.")
             else:
-                # 👈 حالا دقیقاً میفهمیم گپ‌جی‌پی‌تی چرا ارور داده
-                logger.error(f"❌ خطای GapGPT: HTTP {response.status_code} - {response.text[:200]}")
+                logger.error(f"❌ خطای GapGPT: HTTP {response.status_code}")
         except Exception as e:
             logger.error(f"❌ خطای شبکه GapGPT: {e}")
 
-    # تلاش با گوگل رایگان
+    # تلاش با گوگل رایگان (پشتیبان)
     try:
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
         headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
@@ -132,22 +136,27 @@ def _translate_single_batch(english_texts: list[str]) -> list:
             "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
         }
         response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
         if response.status_code == 200:
             text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             res = _parse_translation_response(text)
             if len(res) == expected_len:
                 return res
             else:
-                logger.warning(f"⚠️ گوگل {len(res)} خط برگرداند، ولی {expected_len} خط انتظار داشتیم.")
+                # 👈 اینجا دقیقا لاگ میندازیم که ببینیم گوگل چی گفته
+                logger.warning(f"⚠️ گوگل تعداد خطوط را رعایت نکرد. انتظار: {expected_len} | دریافتی: {len(res)}")
+                logger.warning(f"پاسخ خام گوگل: {text[:300]}")
+        else:
+            logger.error(f"❌ خطای HTTP گوگل: {response.status_code} - {response.text[:200]}")
+            
     except Exception as e:
         logger.error(f"❌ خطای شبکه گوگل: {e}")
 
     return []
 
 def _parse_translation_response(content: str) -> list:
-    """استخراج فوق مقاوم آرایه ترجمه از پاسخ هوش مصنوعی"""
+    """استخراج فوق مقاوم آرایه ترجمه"""
     cleaned = content.replace("\n", "").replace("\r", "")
-    
     try:
         parsed = json.loads(cleaned, strict=False)
         if isinstance(parsed, dict) and "translations" in parsed:
@@ -163,7 +172,6 @@ def _parse_translation_response(content: str) -> list:
             return json.loads(cleaned[start:end+1], strict=False)
         except:
             pass
-            
     return []
 
 # ===========================================
@@ -197,5 +205,5 @@ def build_final_subtitles(words: list[dict]) -> dict:
     return {
         "subtitles": final_subtitles,
         "used_model": "Gladia + AI (Batched)",
-        "api_source": "Gladia (Sync) + Translation"
+        "api_source": "Gladia (Sync) + Google (Fallback)"
     }
