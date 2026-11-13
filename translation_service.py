@@ -112,7 +112,6 @@ def _translate_single_batch(english_texts: list[str]) -> list:
             }
             response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=60)
             
-            # اگر اعتبار تمام شده باشد (403) یا ارور دیگری
             if response.status_code == 403:
                 logger.warning("⚠️ اعتبار GapGPT تمام شده یا کلید مسدود است. سوییچ به گوگل رایگان.")
             elif response.status_code == 200:
@@ -127,30 +126,43 @@ def _translate_single_batch(english_texts: list[str]) -> list:
         except Exception as e:
             logger.error(f"❌ خطای شبکه GapGPT: {e}")
 
-    # تلاش با گوگل رایگان (پشتیبان)
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
-        headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            res = _parse_translation_response(text)
-            if len(res) == expected_len:
-                return res
-            else:
-                # 👈 اینجا دقیقا لاگ میندازیم که ببینیم گوگل چی گفته
-                logger.warning(f"⚠️ گوگل تعداد خطوط را رعایت نکرد. انتظار: {expected_len} | دریافتی: {len(res)}")
-                logger.warning(f"پاسخ خام گوگل: {text[:300]}")
-        else:
-            logger.error(f"❌ خطای HTTP گوگل: {response.status_code} - {response.text[:200]}")
+    # تلاش با گوگل رایگان (مدل 3.5-flash-lite)
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
+    headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
+    }
+
+    # 👈 پرینت دقیق متن انگلیسی که به گوگل ارسال می‌شود
+    logger.info(f"[Translation] English text sent to 3.5-lite: {english_texts}")
+
+    # ۲ بار تلاش می‌کنیم (اگر 503 داد)
+    for attempt in range(2):
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
             
-    except Exception as e:
-        logger.error(f"❌ خطای شبکه گوگل: {e}")
+            if response.status_code == 200:
+                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+                res = _parse_translation_response(text)
+                if len(res) == expected_len:
+                    return res
+                else:
+                    logger.warning(f"⚠️ گوگل تعداد خطوط را رعایت نکرد. انتظار: {expected_len} | دریافتی: {len(res)}")
+                    logger.warning(f"پاسخ خام گوگل: {text[:300]}")
+                    break # اگر فرمت خراب بود، تلاش مجدد فایده ندارد
+                    
+            elif response.status_code == 503:
+                logger.warning(f"⚠️ گوگل 503 داد (تلاش {attempt+1}/2). ۲ ثانیه صبر و تلاش مجدد...")
+                time.sleep(2)
+                continue
+            else:
+                logger.error(f"❌ خطای HTTP گوگل: {response.status_code} - {response.text[:200]}")
+                break
+                
+        except Exception as e:
+            logger.error(f"❌ خطای شبکه گوگل (تلاش {attempt+1}/2): {e}")
+            time.sleep(2)
 
     return []
 
@@ -205,5 +217,5 @@ def build_final_subtitles(words: list[dict]) -> dict:
     return {
         "subtitles": final_subtitles,
         "used_model": "Gladia + AI (Batched)",
-        "api_source": "Gladia (Sync) + Google (Fallback)"
+        "api_source": "Gladia (Sync) + Google 3.5-lite"
     }
