@@ -1,8 +1,7 @@
 """
-ارتباط با Gladia AI — دریافت زیرنویس با زمان‌بندی دقیق در سطح کلمه
+سرویس ترجمه و گروه‌بندی کلمات (مبتنی بر خروجی Gladia)
 """
-
-import os
+import json
 import time
 import logging
 import requests
@@ -10,150 +9,174 @@ import config
 
 logger = logging.getLogger(__name__)
 
-GLADIA_BASE_URL = "https://api.gladia.io/v2"
+# ===========================================
+# ۱. گروه‌بندی کلمات (Chunking)
+# ===========================================
+def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_threshold: float = 0.6) -> list[dict]:
+    chunks = []
+    current_chunk = []
+    chunk_start = 0.0
+    chunk_end = 0.0
 
-def _get_headers():
-    return {
-        "x-gladia-key": config.GLADIA_API_KEY,
-        "Content-Type": "application/json"
-    }
+    for i, w in enumerate(words):
+        word = w.get("word", "").strip()
+        if not word:
+            continue
 
-def transcribe_with_gladia(audio_path: str) -> list[dict]:
-    """
-    ارسال فایل صوتی به Gladia و دریافت لیست کلمات با زمان‌بندی دقیق.
-    
-    خروجی: لیستی از دیکشنری‌ها به شکل:
-    [
-        {"word": "Hello", "start": 0.12, "end": 0.45},
-        {"word": "world", "start": 0.46, "end": 0.89},
-        ...
-    ]
-    """
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"فایل صوتی پیدا نشد: {audio_path}")
+        if not current_chunk:
+            chunk_start = w["start"]
 
-    if not config.GLADIA_API_KEY or "YOUR_GLADIA" in config.GLADIA_API_KEY:
-        raise ValueError("کلید API گلدیا تنظیم نشده است.")
+        current_chunk.append(word)
+        chunk_end = w["end"]
 
-    # 👈 مرحله ۱: آپلود فایل صوتی به Gladia
-    logger.info("[Gladia] در حال آپلود فایل صوتی...")
-    
-    try:
-        with open(audio_path, "rb") as f:
-            # برای آپلود، از multipart/form-data استفاده می‌کنیم
-            files = {"audio": (os.path.basename(audio_path), f, "audio/wav")}
-            # هدر Content-Type رو برای آپلود حذف می‌کنیم تا requests خودش multipart رو ست کنه
-            upload_headers = {"x-gladia-key": config.GLADIA_API_KEY}
-            
-            upload_response = requests.post(
-                f"{GLADIA_BASE_URL}/upload",
-                headers=upload_headers,
-                files=files,
-                timeout=120
-            )
-            
-            if upload_response.status_code != 200:
-                logger.error(f"[Gladia] خطا در آپلود: {upload_response.status_code} - {upload_response.text[:300]}")
-                raise RuntimeError("GLADIA_UPLOAD_FAILED")
-                
-            audio_url = upload_response.json().get("audio_url")
-            logger.info(f"[Gladia] آپلود موفق. URL: {audio_url}")
-            
-    except requests.RequestException as e:
-        logger.error(f"[Gladia] خطای شبکه در آپلود: {e}")
-        raise RuntimeError("GLADIA_UPLOAD_FAILED")
-
-    # 👈 مرحله ۲: درخواست شروع پردازش (Async)
-    logger.info("[Gladia] ارسال درخواست پردازش...")
-    
-    payload = {
-        "audio_url": audio_url,
-        "language_config": {"languages": ["en"]},
-    }
-    
-    try:
-        job_response = requests.post(
-            f"{GLADIA_BASE_URL}/pre-recorded",
-            headers=_get_headers(),
-            json=payload,
-            timeout=30
-        )
+        is_max_words = len(current_chunk) >= max_words
+        is_long_pause = False
         
-        if job_response.status_code not in (200, 201):
-            logger.error(f"[Gladia] خطا در شروع پردازش: {job_response.status_code} - {job_response.text[:300]}")
-            raise RuntimeError("GLADIA_JOB_FAILED")
-            
-        job_data = job_response.json()
-        job_id = job_data.get("id") or job_data.get("result", {}).get("id")
-        
-        if not job_id:
-            logger.error(f"[Gladia] پاسخ نامعتبر: {job_data}")
-            raise RuntimeError("GLADIA_JOB_FAILED")
-            
-        logger.info(f"[Gladia] پردازش شروع شد. Job ID: {job_id}")
-        
-    except requests.RequestException as e:
-        logger.error(f"[Gladia] خطای شبکه در شروع پردازش: {e}")
-        raise RuntimeError("GLADIA_JOB_FAILED")
+        if i + 1 < len(words):
+            next_word_start = words[i + 1]["start"]
+            if next_word_start - chunk_end > pause_threshold:
+                is_long_pause = True
 
-    # 👈 مرحله ۳: منتظر ماندن و گرفتن نتیجه (Polling)
-    logger.info("[Gladia] در حال انتظار برای تکمیل پردازش...")
-    
-    max_wait = 120 # حداکثر ۲ دقیقه صبر می‌کنیم
-    wait_interval = 3 # هر ۳ ثانیه چک می‌کنیم
-    elapsed = 0
-    
-    while elapsed < max_wait:
-        time.sleep(wait_interval)
-        elapsed += wait_interval
-        
-        try:
-            result_response = requests.get(
-                f"{GLADIA_BASE_URL}/pre-recorded/{job_id}",
-                headers=_get_headers(),
-                timeout=30
-            )
-            
-            if result_response.status_code != 200:
-                logger.warning(f"[Gladia] خطا در دریافت وضعیت: {result_response.status_code}")
-                continue
-                
-            result_data = result_response.json()
-            status = result_data.get("status")
-            
-            if status == "done":
-                logger.info("[Gladia] پردازش با موفقیت به پایان رسید.")
-                return _extract_words(result_data)
-            elif status == "error":
-                logger.error(f"[Gladia] پردازش با خطا مواجه شد: {result_data}")
-                raise RuntimeError("GLADIA_TRANSCRIPTION_ERROR")
-            else:
-                logger.info(f"[Gladia] وضعیت: {status} (زمان سپری شده: {elapsed}s)")
-                
-        except requests.RequestException as e:
-            logger.warning(f"[Gladia] خطای شبکه در Polling: {e}")
-            
-    logger.error("[Gladia] زمان انتظار به پایان رسید.")
-    raise RuntimeError("GLADIA_TIMEOUT")
+        is_punctuation = word.endswith(('.', ',', '?', '!'))
 
-
-def _extract_words(result_data: dict) -> list[dict]:
-    """استخراج لیست کلمات از پاسخ Gladia"""
-    words = []
-    
-    transcription = result_data.get("result", {}).get("transcription", {})
-    utterances = transcription.get("utterances", [])
-    
-    for utterance in utterances:
-        # هر utterance ممکنه چند کلمه داشته باشه
-        for word_info in utterance.get("words", []):
-            words.append({
-                "word": word_info.get("word", "").strip(),
-                "start": word_info.get("start", 0.0),
-                "end": word_info.get("end", 0.0)
+        if is_max_words or is_long_pause or is_punctuation or (i == len(words) - 1):
+            chunks.append({
+                "text_en": " ".join(current_chunk),
+                "start": chunk_start,
+                "end": chunk_end
             })
+            current_chunk = []
+
+    return chunks
+
+# ===========================================
+# ۲. ترجمه گروه‌ها با هوش مصنوعی
+# ===========================================
+def translate_chunks(chunks: list[dict]) -> list[dict]:
+    if not chunks:
+        return []
+
+    english_texts = [c["text_en"] for c in chunks]
+
+    # 👈 پرامپت سخت‌گیرانه برای اجبار به ۱ به ۱ بودن تعداد جملات
+    prompt = f"""
+تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از جملات انگلیسی می‌دهم.
+وظیفه تو این است که هر جمله را به فارسی روان، محاوره‌ای و کوتاه (مناسب زیرنویس) ترجمه کنی.
+
+⚠️ قانون بسیار مهم:
+تو باید دقیقاً به همان تعداد جمله‌ای که در لیست می‌بینی، ترجمه تولید کنی. 
+حق نداری جملات را با هم ادغام کنی، حق نداری جمله‌ای را حذف کنی. باید آرایه خروجی دقیقاً {len(english_texts)} عضو داشته باشد.
+
+لیست جملات انگلیسی:
+{json.dumps(english_texts, ensure_ascii=False)}
+
+خروجی را فقط به صورت یک آرایه JSON از رشته‌های فارسی برگردان (مثل ["ترجمه ۱", "ترجمه ۲"]). بدون هیچ متن اضافه.
+""".strip()
+
+    translated_texts = []
+
+    # تلاش با GapGPT (پولی)
+    if getattr(config, "GAPGPT_API_KEY", None) and "YOUR_GAPGPT" not in config.GAPGPT_API_KEY:
+        try:
+            logger.info("💰 ترجمه متنی با GapGPT...")
+            headers = {"Authorization": f"Bearer {config.GAPGPT_API_KEY}", "Content-Type": "application/json"}
+            payload = {
+                "model": "gemini-3.8-flash",
+                "messages": [{"role": "user", "content": prompt}],
+                "response_format": {"type": "json_object"}
+            }
+            response = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=120)
+            if response.status_code == 200:
+                content = response.json()["choices"][0]["message"]["content"]
+                translated_texts = _parse_translation_response(content)
+        except Exception as e:
+            logger.error(f"خطای ترجمه GapGPT: {e}")
+
+    # تلاش با گوگل رایگان
+    if not translated_texts:
+        try:
+            logger.info("🌐 ترجمه متنی با گوگل (رایگان)...")
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+            headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
+            }
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            if response.status_code == 200:
+                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+                translated_texts = _parse_translation_response(text)
+        except Exception as e:
+            logger.error(f"خطای ترجمه گوگل: {e}")
+
+    # 👈 اگر ترجمه ناموفق بود یا تعدادش همخوانی نداشت
+    if not translated_texts or len(translated_texts) != len(chunks):
+        logger.warning(f"⚠️ ترجمه ناموفق یا تعداد نامساوی (انتظار: {len(chunks)}, دریافتی: {len(translated_texts)}). استفاده از متن انگلیسی.")
+        return chunks
+
+    for i in range(len(chunks)):
+        chunks[i]["text_fa"] = translated_texts[i]
+
+    return chunks
+
+def _parse_translation_response(content: str) -> list:
+    """استخراج فوق مقاوم آرایه ترجمه از پاسخ هوش مصنوعی"""
+    cleaned = content.replace("\n", "").replace("\r", "")
+    
+    # اگر پاسخ در یک آبجکت پیچیده بود (مثل {"translations": [...]})
+    try:
+        parsed = json.loads(cleaned, strict=False)
+        if isinstance(parsed, dict):
+            # اولین لیستی که پیدا کنیم رو برمی‌داریم
+            for val in parsed.values():
+                if isinstance(val, list):
+                    return val
+        elif isinstance(parsed, list):
+            return parsed
+    except:
+        pass
+
+    # جستجوی مستقیم برای آکولاد (اگر آبجکت نبود)
+    start, end = cleaned.find('['), cleaned.rfind(']')
+    if start != -1 and end != -1:
+        try:
+            return json.loads(cleaned[start:end+1], strict=False)
+        except:
+            pass
             
+    logger.error(f"خطای خواندن JSON ترجمه. متن خام: {content[:200]}")
+    return []
+
+# ===========================================
+# ۳. تبدیل نهایی به فرمت زیرنویس
+# ===========================================
+def _format_time(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds - int(seconds)) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+def build_final_subtitles(words: list[dict]) -> dict:
     if not words:
-        logger.warning("[Gladia] هیچ کلمه‌ای در پاسخ پیدا نشد.")
-        logger.info(f"[Gladia] Sample extracted words: {words[:5]}") # چاپ ۵ کلمه اول برای تست
-    return words
+        raise ValueError("لیست کلمات خالی است.")
+
+    chunks = group_words_into_chunks(words)
+    logger.info(f"[Pipeline] {len(words)} کلمه به {len(chunks)} خط زیرنویس تبدیل شد.")
+
+    chunks = translate_chunks(chunks)
+
+    final_subtitles = []
+    for i, c in enumerate(chunks):
+        final_subtitles.append({
+            "line_index": i + 1,
+            "start_time": _format_time(c["start"]),
+            "end_time": _format_time(c["end"]),
+            "text": c.get("text_fa", c["text_en"])
+        })
+
+    return {
+        "subtitles": final_subtitles,
+        "used_model": "Gladia + AI",
+        "api_source": "Gladia (Sync) + Translation"
+    }
