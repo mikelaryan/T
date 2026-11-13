@@ -1,5 +1,5 @@
 """
-سرویس ترجمه و گروه‌بندی کلمات (مبتنی بر خروجی Gladia)
+سرویس ترجمه و گروه‌بندی کلمات (با تشخیص هوشمند ادغام خطوط)
 """
 import json
 import time
@@ -41,6 +41,7 @@ def group_words_into_chunks(words: list[dict], max_words: int = 4, pause_thresho
 
         if is_max_words or is_long_pause or is_punctuation or (i == len(words) - 1):
             chunks.append({
+                "id": len(chunks) + 1, # 👈 اضافه کردن شماره خط
                 "text_en": " ".join(current_chunk),
                 "start": chunk_start,
                 "end": chunk_end
@@ -56,52 +57,57 @@ def translate_chunks(chunks: list[dict]) -> list[dict]:
     if not chunks:
         return []
 
-    english_texts = [c["text_en"] for c in chunks]
-    translated_texts = []
+    final_chunks = []
     batch_size = 10
 
-    for i in range(0, len(english_texts), batch_size):
-        batch_en = english_texts[i:i+batch_size]
-        logger.info(f"[Translation] در حال ترجمه بسته {i//batch_size + 1} (شامل {len(batch_en)} خط)...")
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i:i+batch_size]
+        logger.info(f"[Translation] در حال ترجمه بسته {i//batch_size + 1} (شامل {len(batch)} خط)...")
         
-        batch_fa = _translate_single_batch(batch_en)
+        batch_fa = _translate_single_batch(batch)
         
-        if batch_fa and len(batch_fa) == len(batch_en):
-            translated_texts.extend(batch_fa)
+        if batch_fa:
+            final_chunks.extend(batch_fa)
         else:
             logger.warning(f"⚠️ بسته {i//batch_size + 1} ناموفق بود. استفاده از انگلیسی برای این بسته.")
-            translated_texts.extend(batch_en)
+            # اگر ترجمه کل بسته شکست خورد، عیناً همون خطوط انگلیسی رو با همون زمان‌ها برمی‌گردونیم
+            for c in batch:
+                final_chunks.append({
+                    "text_fa": c["text_en"],
+                    "start": c["start"],
+                    "end": c["end"]
+                })
 
-    for i in range(len(chunks)):
-        chunks[i]["text_fa"] = translated_texts[i]
+    return final_chunks
 
-    return chunks
-
-def _translate_single_batch(english_texts: list[str]) -> list:
-    expected_len = len(english_texts)
+def _translate_single_batch(batch_chunks: list[dict]) -> list:
+    expected_len = len(batch_chunks)
+    
+    # 👈 ساخت لیست ورودی برای هوش مصنوعی (متن + شماره خط)
+    input_data = [{"id": c["id"], "text": c["text_en"]} for c in batch_chunks]
     
     prompt = f"""
-تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از {expected_len} جمله انگلیسی می‌دهم.
-وظیفه تو ترجمه هر جمله به فارسی روان، محاوره‌ای و کوتاه (مناسب زیرنویس) است.
+تو یک مترجم حرفه‌ای هستی. من به تو یک لیست از جملات انگلیسی (همراه با شماره خط id) می‌دهم.
+وظیفه تو ترجمه روان و محاوره‌ای این جملات به فارسی است.
 
 ⚠️ قوانین بسیار مهم:
-۱. تو باید دقیقاً {expected_len} جمله ترجمه کنی. 
-۲. حق ادغام کردن یا حذف کردن جملات را نداری.
-۳. لیست خروجی باید دقیقاً {expected_len} عضو داشته باشد.
+۱. اگر دیدی دو یا چند جمله انگلیسی از نظر معنایی به هم وصل هستند و در فارسی بهتر است با هم بیایند، می‌توانی آن‌ها را با هم ترکیب کنی.
+۲. اگر جمله‌ای را ترکیب کردی، باید در خروجی آرایه‌ای از id های آن جملات را قرار دهی.
+۳. زمان‌بندی کلمات به عهده سیستم است، تو فقط باید id ها را درست بدهی.
 
 لیست جملات انگلیسی:
-{json.dumps(english_texts, ensure_ascii=False)}
+{json.dumps(input_data, ensure_ascii=False)}
 
 خروجی را دقیقاً به این فرمت JSON برگردان:
 {{
   "translations": [
-    "ترجمه جمله ۱",
-    "ترجمه جمله ۲"
+    {{"text": "ترجمه روان جمله اول", "ids": [1, 2]}},
+    {{"text": "ترجمه جمله سوم", "ids": [3]}}
   ]
 }}
 """.strip()
 
-    # تلاش با GapGPT (پولی)
+    # --- تلاش با GapGPT ---
     if getattr(config, "GAPGPT_API_KEY", None) and "YOUR_GAPGPT" not in config.GAPGPT_API_KEY:
         try:
             headers = {"Authorization": f"Bearer {config.GAPGPT_API_KEY}", "Content-Type": "application/json"}
@@ -117,16 +123,14 @@ def _translate_single_batch(english_texts: list[str]) -> list:
             elif response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"]
                 res = _parse_translation_response(content)
-                if len(res) == expected_len:
-                    return res
-                else:
-                    logger.warning(f"⚠️ GapGPT تعداد نامعتبری خط ({len(res)} از {expected_len}) برگرداند.")
+                if res:
+                    return _calculate_final_times(res, batch_chunks)
             else:
                 logger.error(f"❌ خطای GapGPT: HTTP {response.status_code}")
         except Exception as e:
             logger.error(f"❌ خطای شبکه GapGPT: {e}")
 
-    # تلاش با گوگل رایگان (مدل 3.5-flash-lite)
+    # --- تلاش با گوگل رایگان ---
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent"
     headers = {"Content-Type": "application/json", "x-goog-api-key": config.GEMINI_API_KEY}
     payload = {
@@ -134,10 +138,8 @@ def _translate_single_batch(english_texts: list[str]) -> list:
         "generationConfig": {"temperature": 0.2, "response_mime_type": "application/json"}
     }
 
-    # 👈 پرینت دقیق متن انگلیسی که به گوگل ارسال می‌شود
-    logger.info(f"[Translation] English text sent to 3.5-lite: {english_texts}")
+    logger.info(f"[Translation] English text sent to 3.5-lite: {input_data}")
 
-    # ۲ بار تلاش می‌کنیم (اگر 503 داد)
     for attempt in range(2):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=60)
@@ -145,12 +147,11 @@ def _translate_single_batch(english_texts: list[str]) -> list:
             if response.status_code == 200:
                 text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
                 res = _parse_translation_response(text)
-                if len(res) == expected_len:
-                    return res
+                if res:
+                    return _calculate_final_times(res, batch_chunks)
                 else:
-                    logger.warning(f"⚠️ گوگل تعداد خطوط را رعایت نکرد. انتظار: {expected_len} | دریافتی: {len(res)}")
-                    logger.warning(f"پاسخ خام گوگل: {text[:300]}")
-                    break # اگر فرمت خراب بود، تلاش مجدد فایده ندارد
+                    logger.warning(f"⚠️ فرمت خروجی گوگل نامعتبر بود: {text[:300]}")
+                    break
                     
             elif response.status_code == 503:
                 logger.warning(f"⚠️ گوگل 503 داد (تلاش {attempt+1}/2). ۲ ثانیه صبر و تلاش مجدد...")
@@ -166,8 +167,38 @@ def _translate_single_batch(english_texts: list[str]) -> list:
 
     return []
 
+def _calculate_final_times(translations: list, original_chunks: list) -> list:
+    """
+    این تابع نابغه‌ی کد ماست!
+    زمان شروع را از اولین id و زمان پایان را از آخرین id برمی‌دارد.
+    """
+    chunk_dict = {c["id"]: c for c in original_chunks}
+    final_result = []
+
+    for item in translations:
+        text_fa = item.get("text", "").strip()
+        ids = item.get("ids", [])
+        
+        if not text_fa or not ids:
+            continue
+
+        try:
+            # پیدا کردن زمان شروع و پایان با توجه به id ها
+            starts = [chunk_dict[i]["start"] for i in ids if i in chunk_dict]
+            ends = [chunk_dict[i]["end"] for i in ids if i in chunk_dict]
+            
+            if starts and ends:
+                final_result.append({
+                    "text_fa": text_fa,
+                    "start": min(starts),
+                    "end": max(ends)
+                })
+        except Exception as e:
+            logger.error(f"خطا در محاسبه زمان برای ids {ids}: {e}")
+
+    return final_result
+
 def _parse_translation_response(content: str) -> list:
-    """استخراج فوق مقاوم آرایه ترجمه"""
     cleaned = content.replace("\n", "").replace("\r", "")
     try:
         parsed = json.loads(cleaned, strict=False)
@@ -178,10 +209,12 @@ def _parse_translation_response(content: str) -> list:
     except:
         pass
 
-    start, end = cleaned.find('['), cleaned.rfind(']')
+    start, end = cleaned.find('{'), cleaned.rfind('}')
     if start != -1 and end != -1:
         try:
-            return json.loads(cleaned[start:end+1], strict=False)
+            parsed = json.loads(cleaned[start:end+1], strict=False)
+            if isinstance(parsed, dict) and "translations" in parsed:
+                return parsed["translations"]
         except:
             pass
     return []
@@ -203,19 +236,20 @@ def build_final_subtitles(words: list[dict]) -> dict:
     chunks = group_words_into_chunks(words)
     logger.info(f"[Pipeline] {len(words)} کلمه به {len(chunks)} خط زیرنویس تبدیل شد.")
 
-    chunks = translate_chunks(chunks)
+    # گرفتن خطوط ترجمه شده و محاسبه زمان‌ها
+    translated_chunks = translate_chunks(chunks)
 
     final_subtitles = []
-    for i, c in enumerate(chunks):
+    for i, c in enumerate(translated_chunks):
         final_subtitles.append({
             "line_index": i + 1,
             "start_time": _format_time(c["start"]),
             "end_time": _format_time(c["end"]),
-            "text": c.get("text_fa", c["text_en"])
+            "text": c["text_fa"]
         })
 
     return {
         "subtitles": final_subtitles,
-        "used_model": "Gladia + AI (Batched)",
+        "used_model": "Gladia + AI (Smart Merge)",
         "api_source": "Gladia (Sync) + Google 3.5-lite"
     }
